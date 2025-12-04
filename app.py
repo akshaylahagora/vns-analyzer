@@ -61,7 +61,8 @@ STOCK_LIST.sort()
 
 # --- SESSION STATE ---
 if 'start_date' not in st.session_state:
-    st.session_state.start_date = datetime.now() - timedelta(days=180)
+    # UPDATED: Default to 30 days (1 Month)
+    st.session_state.start_date = datetime.now() - timedelta(days=30)
 if 'end_date' not in st.session_state:
     st.session_state.end_date = datetime.now()
 
@@ -81,7 +82,9 @@ with st.sidebar:
     selected_stock = st.selectbox("Select Stock", STOCK_LIST, index=STOCK_LIST.index("KOTAKBANK") if "KOTAKBANK" in STOCK_LIST else 0)
     st.divider()
     st.subheader("Time Period")
-    st.radio("Quick Select:", ["1M", "3M", "6M", "1Y", "YTD", "Custom"], index=2, horizontal=True, key="duration_selector", on_change=update_dates)
+    
+    # UPDATED: index=0 sets "1M" as default
+    st.radio("Quick Select:", ["1M", "3M", "6M", "1Y", "YTD", "Custom"], index=0, horizontal=True, key="duration_selector", on_change=update_dates)
     
     date_range = st.date_input("Date Range", value=(st.session_state.start_date, st.session_state.end_date), min_value=datetime(2000, 1, 1), max_value=datetime.now())
     if len(date_range) == 2:
