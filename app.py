@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 
-# --- PAGE CONFIGURATION ---
+# --- PAGE CONFIGURATION (Must be first) ---
 st.set_page_config(
     page_title="VNS Pro Dashboard",
     page_icon="📈",
@@ -14,7 +14,10 @@ st.set_page_config(
 # --- CUSTOM CSS ---
 st.markdown("""
 <style>
+    /* Main Background */
     .stApp { background-color: #f8f9fa; }
+    
+    /* Metrics Styling */
     div[data-testid="stMetricValue"] { font-size: 24px; font-weight: bold; }
     
     /* VNS Status Badges */
@@ -66,31 +69,29 @@ def update_dates():
         st.session_state.start_date = now - timedelta(days=365)
     elif selection == "YTD":
         st.session_state.start_date = datetime(now.year, 1, 1)
-    # If "Custom", we don't change dates automatically, let the date picker handle it
+    # If "Custom", we don't change dates automatically
 
 # --- SIDEBAR UI ---
 with st.sidebar:
     st.header("⚙️ Configuration")
     
     # Stock Dropdown
-    selected_stock = st.selectbox("Select Stock", STOCK_LIST, index=STOCK_LIST.index("KOTAKBANK"))
+    selected_stock = st.selectbox("Select Stock", STOCK_LIST, index=STOCK_LIST.index("KOTAKBANK") if "KOTAKBANK" in STOCK_LIST else 0)
     
     st.divider()
     st.subheader("Time Period")
     
-    # 1. RADIO BUTTONS (Horizontal) - Clearly shows selection
+    # 1. RADIO BUTTONS (Horizontal)
     st.radio(
         "Quick Select:",
         options=["1M", "3M", "6M", "1Y", "YTD", "Custom"],
-        index=2, # Default to 6M (0=1M, 1=3M, 2=6M...)
+        index=2, # Default to 6M
         horizontal=True,
         key="duration_selector",
         on_change=update_dates
     )
 
     # 2. Date Pickers (Dynamic)
-    # We display them, but if user changes them, we might want to set radio to "Custom"
-    # For simplicity in Streamlit, we just let these reflect the state.
     date_range = st.date_input(
         "Date Range",
         value=(st.session_state.start_date, st.session_state.end_date),
@@ -107,13 +108,19 @@ with st.sidebar:
     run_btn = st.button("🚀 Run VNS Analysis", type="primary", use_container_width=True)
 
 
-# --- MAIN LOGIC (Same VNS Engine) ---
+# --- MAIN LOGIC (VNS Engine) ---
 @st.cache_data(ttl=300)
 def fetch_nse_data(symbol, start, end):
     try:
-        headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
+        # Headers to mimic a real browser request to avoid NSE blocking
+        headers = { 
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36", 
+            "Referer": "https://www.nseindia.com/" 
+        }
         session = requests.Session()
         session.headers.update(headers)
+        
+        # Hit homepage to get cookies
         session.get("https://www.nseindia.com", timeout=5) 
         
         url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={symbol}&type=priceVolumeDeliverable&series=ALL"
@@ -123,10 +130,15 @@ def fetch_nse_data(symbol, start, end):
             data = response.json().get('data', [])
             df = pd.DataFrame(data)
             if df.empty: return None
+            
+            # Filter for Equity series only
             df = df[df['CH_SERIES'] == 'EQ'] 
             df['Date'] = pd.to_datetime(df['mTIMESTAMP'])
+            
+            # Convert columns to float
             for col in ['CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_OPENING_PRICE', 'CH_CLOSING_PRICE']:
                 df[col] = df[col].astype(float)
+            
             return df.sort_values('Date').reset_index(drop=True)
         return None
     except: return None
@@ -142,13 +154,17 @@ def analyze_vns(df):
         bu, be, signal, signal_type = None, None, "", ""
         
         if prev is not None:
+            # 1. Determine Levels
             if row['CH_TRADE_LOW_PRICE'] < prev['CH_TRADE_LOW_PRICE']:
                 bu = prev['CH_TRADE_HIGH_PRICE']
                 last_bu = bu
             if row['CH_TRADE_HIGH_PRICE'] > prev['CH_TRADE_HIGH_PRICE']:
                 be = prev['CH_TRADE_LOW_PRICE']
                 last_be = be
-                
+            
+            # 2. VNS Logic State Machine
+            
+            # Breakout/Breakdown
             if last_bu and row['CH_CLOSING_PRICE'] > last_bu and trend != "Bullish":
                 trend = "Bullish"
                 signal = "TEJI (Breakout)"
@@ -157,12 +173,16 @@ def analyze_vns(df):
                 trend = "Bearish"
                 signal = "MANDI (Breakdown)"
                 signal_type = "bear"
+                
+            # Atak (Reversal Warnings)
             elif trend == "Bullish" and last_bu and (row['CH_TRADE_HIGH_PRICE'] >= last_bu * 0.995) and row['CH_CLOSING_PRICE'] < last_bu:
                 signal = "ATAK (Double Top)"
                 signal_type = "warn"
             elif trend == "Bearish" and last_be and (row['CH_TRADE_LOW_PRICE'] <= last_be * 1.005) and row['CH_CLOSING_PRICE'] > last_be:
                 signal = "ATAK (Double Bottom)"
                 signal_type = "warn"
+                
+            # Reactions / Continuation
             else:
                 if trend == "Bullish":
                     if row['CH_TRADE_LOW_PRICE'] < prev['CH_TRADE_LOW_PRICE']:
@@ -176,9 +196,15 @@ def analyze_vns(df):
                         signal = "Mandi Continuation"; signal_type = "bear_light"
 
         results.append({
-            'Date': row['Date'], 'Open': row['CH_OPENING_PRICE'], 'High': row['CH_TRADE_HIGH_PRICE'],
-            'Low': row['CH_TRADE_LOW_PRICE'], 'Close': row['CH_CLOSING_PRICE'],
-            'BU (Resist)': bu, 'BE (Support)': be, 'Signal': signal, 'Type': signal_type
+            'Date': row['Date'], 
+            'Open': row['CH_OPENING_PRICE'], 
+            'High': row['CH_TRADE_HIGH_PRICE'],
+            'Low': row['CH_TRADE_LOW_PRICE'], 
+            'Close': row['CH_CLOSING_PRICE'],
+            'BU (Resist)': bu, 
+            'BE (Support)': be, 
+            'Signal': signal, 
+            'Type': signal_type
         })
     return pd.DataFrame(results), trend, last_bu, last_be
 
@@ -187,11 +213,13 @@ st.title(f"📊 VNS Theory: {selected_stock}")
 st.markdown(f"Analysis from **{st.session_state.start_date.strftime('%d-%b-%Y')}** to **{st.session_state.end_date.strftime('%d-%b-%Y')}**")
 
 if run_btn:
-    with st.spinner("Analyzing..."):
+    with st.spinner(f"Fetching data for {selected_stock}..."):
         raw_df = fetch_nse_data(selected_stock, st.session_state.start_date, st.session_state.end_date)
+        
         if raw_df is not None:
             analyzed_df, trend, final_bu, final_be = analyze_vns(raw_df)
             
+            # --- METRICS ROW ---
             c1, c2, c3, c4 = st.columns(4)
             with c1:
                 st.markdown("### Trend")
@@ -204,24 +232,36 @@ if run_btn:
 
             st.divider()
 
+            # --- STYLED TABLE LOGIC ---
             def style_vns(row):
                 s = row['Type']
-                if s == 'bull': return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row)
-                if s == 'bear': return ['background-color: #f8d7da; color: #721c24; font-weight: bold'] * len(row)
-                if s == 'warn': return ['background-color: #fff3cd; color: #856404; font-weight: bold'] * len(row)
-                if s == 'info': return ['background-color: #e2e6ea; color: #0c5460; font-style: italic'] * len(row)
+                
+                # Styles
+                bull = 'background-color: #d4edda; color: #155724; font-weight: bold'
+                bear = 'background-color: #f8d7da; color: #721c24; font-weight: bold'
+                warn = 'background-color: #fff3cd; color: #856404; font-weight: bold'
+                info = 'background-color: #e2e6ea; color: #0c5460; font-style: italic'
+                
+                if s == 'bull': return [bull] * len(row)
+                if s == 'bear': return [bear] * len(row)
+                if s == 'warn': return [warn] * len(row)
+                if s == 'info': return [info] * len(row)
                 return [''] * len(row)
 
-            display_df = analyzed_df.drop(columns=['Type'])
+            # Display Table (Hiding 'Type' via column_config instead of dropping it)
             st.dataframe(
-                display_df.style.apply(style_vns, axis=1).format({
+                analyzed_df.style.apply(style_vns, axis=1).format({
                     "Date": lambda t: t.strftime("%d-%b-%Y"),
                     "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}",
                     "BU (Resist)": "{:.2f}", "BE (Support)": "{:.2f}"
                 }, na_rep=""),
-                use_container_width=True, height=600
+                column_config={
+                    "Type": None  # <--- FIX: This hides the column but keeps it available for styling
+                },
+                use_container_width=True, 
+                height=600
             )
         else:
-            st.error("Could not fetch data. Try a shorter date range or wait a moment.")
+            st.error("⚠️ Could not fetch data. NSE may be blocking the request. Please wait 10 seconds and try again.")
 else:
     st.info("👈 Select options in the sidebar and click RUN.")
