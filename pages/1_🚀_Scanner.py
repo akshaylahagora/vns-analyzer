@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Pro F&O Scanner", page_icon="🔭", layout="wide")
 
 st.title("🔭 Pro F&O Scanner")
-st.markdown("Automated VNS Scanner • **Updates daily after 6:00 PM**")
+st.markdown("Automated VNS Scanner • **Daily 6PM Auto-Update**")
 
 # --- CONFIGURATION ---
 SCAN_FILE = "daily_scan_results.json" 
@@ -25,31 +25,39 @@ FNO_STOCKS = [
     "POLYCAB", "HAVELLS", "SRF", "TATAMOTORS", "MRF", "SHREECEM", "BOSCHLTD"
 ]
 
-# --- CSS STYLING ---
+# --- MOBILE COMPATIBLE CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: #f8f9fa; }
     
-    /* Card Container */
+    /* Responsive Card */
     .stock-card {
         background-color: white;
-        padding: 15px;
+        padding: 12px;
         border-radius: 10px;
         border: 1px solid #e0e0e0;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        margin-bottom: 5px;
+        margin-bottom: 8px;
+        box-sizing: border-box; /* Crucial for mobile padding */
+        width: 100%;
     }
-    .stock-symbol { font-size: 1.1em; font-weight: 800; color: #333; }
-    .stock-price { font-size: 1.0em; font-weight: 600; color: #555; }
+    .stock-symbol { font-size: 1.1rem; font-weight: 800; color: #333; }
+    .stock-price { font-size: 1.0rem; font-weight: 600; color: #555; }
     
-    /* Headers for Columns */
-    .col-header { 
-        padding: 10px; border-radius: 8px; color: white; 
-        font-weight: bold; text-align: center; margin-bottom: 15px; text-transform: uppercase; 
+    /* Info Row inside Card */
+    .card-info {
+        display: flex; 
+        justify-content: space-between; 
+        font-size: 0.85rem; 
+        color: #666; 
+        margin-top: 8px;
     }
     
-    /* Modal/Dialog Styling Fixes */
-    div[data-testid="stDialog"] { width: 80vw; } 
+    /* Mobile-Friendly Popup */
+    div[data-testid="stDialog"] { width: 95vw !important; max-width: 1000px; } 
+    
+    /* Header Colors */
+    .header-box { padding: 10px; border-radius: 6px; color: white; font-weight: bold; text-align: center; margin-bottom: 12px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -143,7 +151,6 @@ def run_full_scan():
     progress_bar = st.progress(0)
     status_text = st.empty()
     scan_results = []
-    
     start_date = st.session_state.scan_start_date
     duration_used = st.session_state.scan_duration_label
     
@@ -195,10 +202,12 @@ else:
 @st.dialog("Stock Details", width="large")
 def show_details(stock):
     st.subheader(f"{stock['Symbol']} : ₹{stock['Close']:.2f}")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Trend", stock['Trend'])
-    m2.metric("Resistance (BU)", f"{stock['BU']:.2f}" if stock['BU'] else "-")
-    m3.metric("Support (BE)", f"{stock['BE']:.2f}" if stock['BE'] else "-")
+    
+    # Use container width for mobile friendliness
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Trend", stock['Trend'])
+    c2.metric("Resistance", f"{stock['BU']:.2f}" if stock['BU'] else "-")
+    c3.metric("Support", f"{stock['BE']:.2f}" if stock['BE'] else "-")
     
     st.divider()
     
@@ -216,8 +225,8 @@ def show_details(stock):
             "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}", "BU": "{:.2f}", "BE": "{:.2f}"
         }, na_rep=""),
         column_config={"Type": None}, 
-        use_container_width=True, 
-        height=500
+        use_container_width=True, # Critical for mobile
+        height=400
     )
 
 # --- RENDER UI ---
@@ -236,14 +245,10 @@ if current_data:
     neutral = [r for r in filtered_stocks if r['Trend'] == "Neutral"]
 
     def render_list(stock_list, header_text, header_color):
-        st.markdown(f"""
-        <div style="background-color:{header_color}; padding:8px; border-radius:6px; color:white; font-weight:bold; text-align:center; margin-bottom:10px;">
-            {header_text} ({len(stock_list)})
-        </div>
-        """, unsafe_allow_html=True)
+        # Header Box
+        st.markdown(f"<div class='header-box' style='background-color:{header_color}'>{header_text} ({len(stock_list)})</div>", unsafe_allow_html=True)
         
         for s in stock_list:
-            # FIX: Format strings BEFORE putting in HTML
             bu_text = f"{s['BU']:.2f}" if s['BU'] else "-"
             be_text = f"{s['BE']:.2f}" if s['BE'] else "-"
 
@@ -253,17 +258,19 @@ if current_data:
                     <span class="stock-symbol">{s['Symbol']}</span>
                     <span class="stock-price">₹{s['Close']:.2f}</span>
                 </div>
-                <div style="font-size:0.85em; color:#666; margin-top:5px; display:flex; justify-content:space-between;">
+                <div class="card-info">
                     <span>BU: {bu_text}</span>
                     <span>BE: {be_text}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
+            # Full width button for easier tapping on mobile
             if st.button(f"🔍 View {s['Symbol']}", key=f"btn_{s['Symbol']}", use_container_width=True):
                 show_details(s)
 
+    # Columns stack automatically on mobile
     c1, c2, c3 = st.columns(3)
-    with c1: render_list(bulls, "🟢 BULLISH / TEJI", "#28a745")
-    with c2: render_list(bears, "🔴 BEARISH / MANDI", "#dc3545")
+    with c1: render_list(bulls, "🟢 BULLISH", "#28a745")
+    with c2: render_list(bears, "🔴 BEARISH", "#dc3545")
     with c3: render_list(neutral, "⚪ NEUTRAL", "#6c757d")
