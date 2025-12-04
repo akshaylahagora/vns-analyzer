@@ -11,17 +11,37 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS ---
+# --- MOBILE FRIENDLY CSS ---
 st.markdown("""
 <style>
+    /* Global Mobile Tweaks */
     .stApp { background-color: #f8f9fa; }
-    div[data-testid="stMetricValue"] { font-size: 24px; font-weight: bold; }
     
-    .status-bull { background-color: #d4edda; color: #155724; padding: 6px 12px; border-radius: 6px; font-weight: bold; border-left: 5px solid #28a745; display: inline-block; }
-    .status-bear { background-color: #f8d7da; color: #721c24; padding: 6px 12px; border-radius: 6px; font-weight: bold; border-left: 5px solid #dc3545; display: inline-block; }
-    .status-neutral { background-color: #e2e3e5; color: #383d41; padding: 6px 12px; border-radius: 6px; font-weight: bold; display: inline-block; }
+    /* Metrics */
+    div[data-testid="stMetricValue"] { font-size: 1.5rem; font-weight: bold; }
     
-    div[role="radiogroup"] > label > div:first-child { background-color: #fff; border: 1px solid #ddd; }
+    /* Responsive Badges */
+    .status-bull { 
+        background-color: #d4edda; color: #155724; padding: 0.5rem 1rem; 
+        border-radius: 6px; font-weight: bold; border-left: 5px solid #28a745; 
+        display: inline-block; white-space: nowrap;
+    }
+    .status-bear { 
+        background-color: #f8d7da; color: #721c24; padding: 0.5rem 1rem; 
+        border-radius: 6px; font-weight: bold; border-left: 5px solid #dc3545; 
+        display: inline-block; white-space: nowrap;
+    }
+    .status-neutral { 
+        background-color: #e2e3e5; color: #383d41; padding: 0.5rem 1rem; 
+        border-radius: 6px; font-weight: bold; 
+        display: inline-block; white-space: nowrap;
+    }
+    
+    /* Make Radio Buttons look like Tabs (Mobile Friendly) */
+    div[role="radiogroup"] { flex-wrap: wrap; }
+    div[role="radiogroup"] > label > div:first-child {
+        background-color: #fff; border: 1px solid #ddd;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -41,7 +61,8 @@ STOCK_LIST.sort()
 
 # --- SESSION STATE ---
 if 'start_date' not in st.session_state:
-    st.session_state.start_date = datetime.now() - timedelta(days=180)
+    # UPDATED: Default to 30 days (1 Month)
+    st.session_state.start_date = datetime.now() - timedelta(days=30)
 if 'end_date' not in st.session_state:
     st.session_state.end_date = datetime.now()
 
@@ -57,11 +78,13 @@ def update_dates():
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Single Stock Analysis")
+    st.header("⚙️ Settings")
     selected_stock = st.selectbox("Select Stock", STOCK_LIST, index=STOCK_LIST.index("KOTAKBANK") if "KOTAKBANK" in STOCK_LIST else 0)
     st.divider()
     st.subheader("Time Period")
-    st.radio("Quick Select:", ["1M", "3M", "6M", "1Y", "YTD", "Custom"], index=2, horizontal=True, key="duration_selector", on_change=update_dates)
+    
+    # UPDATED: index=0 sets "1M" as default
+    st.radio("Quick Select:", ["1M", "3M", "6M", "1Y", "YTD", "Custom"], index=0, horizontal=True, key="duration_selector", on_change=update_dates)
     
     date_range = st.date_input("Date Range", value=(st.session_state.start_date, st.session_state.end_date), min_value=datetime(2000, 1, 1), max_value=datetime.now())
     if len(date_range) == 2:
@@ -130,24 +153,28 @@ def analyze_vns(df):
 
 # --- OUTPUT ---
 st.title(f"📊 VNS Theory: {selected_stock}")
-st.markdown(f"Analysis from **{st.session_state.start_date.strftime('%d-%b-%Y')}** to **{st.session_state.end_date.strftime('%d-%b-%Y')}**")
+st.markdown(f"Analysis: **{st.session_state.start_date.strftime('%d-%b-%Y')}** to **{st.session_state.end_date.strftime('%d-%b-%Y')}**")
 
 if run_btn:
     with st.spinner(f"Fetching data for {selected_stock}..."):
         raw_df = fetch_nse_data(selected_stock, st.session_state.start_date, st.session_state.end_date)
         if raw_df is not None:
             analyzed_df, trend, final_bu, final_be = analyze_vns(raw_df)
+            
+            # Responsive Columns
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                st.markdown("### Trend")
+                st.caption("Current Trend")
                 if trend == "Bullish": st.markdown('<div class="status-bull">BULLISH (TEJI)</div>', unsafe_allow_html=True)
                 elif trend == "Bearish": st.markdown('<div class="status-bear">BEARISH (MANDI)</div>', unsafe_allow_html=True)
                 else: st.markdown('<div class="status-neutral">NEUTRAL</div>', unsafe_allow_html=True)
             with c2: st.metric("Close", f"{analyzed_df.iloc[-1]['Close']:.2f}")
-            with c3: st.metric("Resistance (BU)", f"{final_bu:.2f}" if final_bu else "-")
-            with c4: st.metric("Support (BE)", f"{final_be:.2f}" if final_be else "-")
+            with c3: st.metric("Res (BU)", f"{final_bu:.2f}" if final_bu else "-")
+            with c4: st.metric("Sup (BE)", f"{final_be:.2f}" if final_be else "-")
+            
             st.divider()
 
+            # Styling Function
             def style_vns(row):
                 s = row['Type']
                 bull = 'background-color: #d4edda; color: #155724; font-weight: bold'
@@ -160,6 +187,7 @@ if run_btn:
                 if s == 'info': return [info] * len(row)
                 return [''] * len(row)
 
+            # Table
             st.dataframe(
                 analyzed_df.style.apply(style_vns, axis=1).format({
                     "Date": lambda t: t.strftime("%d-%b-%Y"), "Open": "{:.2f}", "High": "{:.2f}", 
