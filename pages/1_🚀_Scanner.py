@@ -10,22 +10,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Pro F&O Scanner", page_icon="🔭", layout="wide")
 
 st.title("🔭 Pro F&O Scanner")
-st.markdown("Automated VNS Scanner • **Click on any stock to see details**")
-
-# --- CSS FOR CLEAN LOOK ---
-st.markdown("""
-<style>
-    .stApp { background-color: #f8f9fa; }
-    
-    /* Metrics inside the expander */
-    div[data-testid="stMetricValue"] { font-size: 18px; }
-    div[data-testid="stMetricLabel"] { font-size: 12px; color: #666; }
-    
-    /* Colored borders for Expanders based on Trend */
-    /* This uses a trick to style the expander container if possible, 
-       but for reliability we rely on emojis and internal styling */
-</style>
-""", unsafe_allow_html=True)
+st.markdown("Automated VNS Scanner • **Clean View**")
 
 # --- CONFIGURATION ---
 SCAN_FILE = "daily_scan_results.json" 
@@ -37,7 +22,7 @@ FNO_STOCKS = [
     "ADANIENT", "GRASIM", "BAJAJFINSV", "NESTLEIND", "EICHERMOT", "DRREDDY", "DIVISLAB", 
     "APOLLOHOSP", "BRITANNIA", "TRENT", "HAL", "BEL", "SIEMENS", "INDIGO", "TATASTEEL", 
     "JIOFIN", "COALINDIA", "HCLTECH", "SUNPHARMA", "ADANIPORTS", "WIPRO", "VEDL", "DLF",
-    "POLYCAB", "HAVELLS", "SRF", "EICHERMOT", "TATAMOTORS", "MRF", "SHREECEM", "BOSCHLTD"
+    "POLYCAB", "HAVELLS", "SRF", "TATAMOTORS", "MRF", "SHREECEM", "BOSCHLTD"
 ]
 
 # --- SESSION STATE ---
@@ -57,18 +42,24 @@ def update_scan_dates():
 
 # --- SIDEBAR CONTROLS ---
 with st.sidebar:
-    st.header("⚙️ Settings")
+    st.header("⚙️ Scanner Settings")
+    
     st.subheader("1. Period")
     st.radio("Duration", ["1M", "3M", "6M", "1Y"], index=0, horizontal=True, key="scan_duration_selector", on_change=update_scan_dates)
+    
     st.divider()
+    
     st.subheader("2. Price Filter (₹)")
     c1, c2 = st.columns(2)
     min_price = c1.number_input("Min", min_value=0, value=1000, step=100)
     max_price = c2.number_input("Max", min_value=0, value=100000, step=500)
+    
     st.divider()
+    
     st.subheader("3. Speed")
     scan_delay = st.slider("Delay (sec)", 0.1, 5.0, 0.5, 0.1)
-    st.markdown("---")
+    
+    st.divider()
     force_scan = st.button("🔄 Force Refresh", type="primary", use_container_width=True)
 
 # --- CORE FUNCTIONS ---
@@ -183,44 +174,58 @@ if current_data:
     bears = [r for r in stocks if r['Trend'] == "Bearish"]
     neutral = [r for r in stocks if r['Trend'] == "Neutral"]
 
-    # Table Styling
+    # --- READABLE TABLE STYLING ---
+    # Used high contrast colors for text
     def color_rows(row):
         s = row['Type']
-        if s == 'bull': return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row)
-        if s == 'bear': return ['background-color: #f8d7da; color: #721c24; font-weight: bold'] * len(row)
-        if s == 'warn': return ['background-color: #fff3cd; color: #856404; font-weight: bold'] * len(row)
-        if s == 'info': return ['background-color: #e2e6ea; color: #0c5460; font-style: italic'] * len(row)
+        # Light Green bg, Dark Green text
+        if s == 'bull': return ['background-color: #d4edda; color: #0f5132; font-weight: bold'] * len(row)
+        # Light Red bg, Dark Red text
+        if s == 'bear': return ['background-color: #f8d7da; color: #842029; font-weight: bold'] * len(row)
+        # Light Yellow bg, Dark Brown text
+        if s == 'warn': return ['background-color: #fff3cd; color: #664d03; font-weight: bold'] * len(row)
+        # Light Blue bg, Dark Blue text
+        if s == 'info': return ['background-color: #cff4fc; color: #055160; font-style: italic'] * len(row)
         return [''] * len(row)
 
-    def render_expander_list(stock_list, icon):
+    def render_list(stock_list, header_emoji, header_text, header_color):
+        # Header with distinct background
+        st.markdown(f"""
+        <div style="background-color:{header_color}; padding:10px; border-radius:8px; color:white; font-weight:bold; text-align:center; margin-bottom:10px;">
+            {header_emoji} {header_text} ({len(stock_list)})
+        </div>
+        """, unsafe_allow_html=True)
+        
         for s in stock_list:
-            # We use NATIVE Streamlit Expander as the container so it IS clickable
-            label = f"{icon} {s['Symbol']} (₹{s['Close']:.2f})"
+            # Clean Title: SYMBOL  |  PRICE
+            label = f"**{s['Symbol']}** :  ₹{s['Close']:.2f}"
+            
             with st.expander(label):
-                # Inside the expander: Summary Metrics + Table
+                # 1. Summary Metrics inside expander
                 m1, m2 = st.columns(2)
                 m1.metric("Resistance (BU)", f"{s['BU']:.2f}" if s['BU'] else "-")
                 m2.metric("Support (BE)", f"{s['BE']:.2f}" if s['BE'] else "-")
                 
-                # Table
-                df = pd.DataFrame(s['History'])
+                st.divider()
+                
+                # 2. Readable Table
+                hist_df = pd.DataFrame(s['History'])
                 st.dataframe(
-                    df.style.apply(color_rows, axis=1).format({
+                    hist_df.style.apply(color_rows, axis=1).format({
                         "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}", "BU": "{:.2f}", "BE": "{:.2f}"
                     }, na_rep=""),
-                    column_config={"Type": None}, use_container_width=True, height=300
+                    column_config={"Type": None}, # Hide Type col
+                    use_container_width=True, 
+                    height=300
                 )
 
     c1, c2, c3 = st.columns(3)
     
     with c1:
-        st.subheader(f"🟢 TEJI ({len(bulls)})")
-        render_expander_list(bulls, "🟢")
+        render_list(bulls, "📈", "BULLISH / TEJI", "#28a745") # Green Header
             
     with c2:
-        st.subheader(f"🔴 MANDI ({len(bears)})")
-        render_expander_list(bears, "🔴")
+        render_list(bears, "📉", "BEARISH / MANDI", "#dc3545") # Red Header
 
     with c3:
-        st.subheader(f"🟡 NEUTRAL ({len(neutral)})")
-        render_expander_list(neutral, "⚪")
+        render_list(neutral, "⚪", "NEUTRAL", "#6c757d") # Grey Header
