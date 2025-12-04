@@ -49,7 +49,7 @@ st.markdown("""
     }
     
     /* Modal/Dialog Styling Fixes */
-    div[data-testid="stDialog"] { width: 80vw; } /* Make popup wider */
+    div[data-testid="stDialog"] { width: 80vw; } 
 </style>
 """, unsafe_allow_html=True)
 
@@ -191,12 +191,10 @@ elif should_scan is True:
 else:
     current_data = payload
 
-# --- POPUP DIALOG FUNCTION (NEW!) ---
+# --- POPUP DIALOG ---
 @st.dialog("Stock Details", width="large")
 def show_details(stock):
-    # 1. Header Metrics
     st.subheader(f"{stock['Symbol']} : ₹{stock['Close']:.2f}")
-    
     m1, m2, m3 = st.columns(3)
     m1.metric("Trend", stock['Trend'])
     m2.metric("Resistance (BU)", f"{stock['BU']:.2f}" if stock['BU'] else "-")
@@ -204,7 +202,6 @@ def show_details(stock):
     
     st.divider()
     
-    # 2. Styling Logic
     def color_rows(row):
         s = row['Type']
         if s == 'bull': return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row)
@@ -213,7 +210,6 @@ def show_details(stock):
         if s == 'info': return ['background-color: #e2e6ea; color: #0c5460; font-style: italic'] * len(row)
         return [''] * len(row)
 
-    # 3. Full Table
     hist_df = pd.DataFrame(stock['History'])
     st.dataframe(
         hist_df.style.apply(color_rows, axis=1).format({
@@ -232,7 +228,6 @@ if current_data:
     if data_duration != st.session_state.scan_duration_label:
         st.warning(f"⚠️ Data is {data_duration}, but you selected {st.session_state.scan_duration_label}. Click Force Refresh.")
 
-    # Filter
     all_stocks = current_data['stocks']
     filtered_stocks = [s for s in all_stocks if view_min_price <= s['Close'] <= view_max_price]
 
@@ -248,7 +243,10 @@ if current_data:
         """, unsafe_allow_html=True)
         
         for s in stock_list:
-            # Card UI
+            # FIX: Format strings BEFORE putting in HTML
+            bu_text = f"{s['BU']:.2f}" if s['BU'] else "-"
+            be_text = f"{s['BE']:.2f}" if s['BE'] else "-"
+
             st.markdown(f"""
             <div class="stock-card">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -256,13 +254,12 @@ if current_data:
                     <span class="stock-price">₹{s['Close']:.2f}</span>
                 </div>
                 <div style="font-size:0.85em; color:#666; margin-top:5px; display:flex; justify-content:space-between;">
-                    <span>BU: {s['BU']:.2f if s['BU'] else '-'}</span>
-                    <span>BE: {s['BE']:.2f if s['BE'] else '-'}</span>
+                    <span>BU: {bu_text}</span>
+                    <span>BE: {be_text}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
-            # Button triggers Popup
             if st.button(f"🔍 View {s['Symbol']}", key=f"btn_{s['Symbol']}", use_container_width=True):
                 show_details(s)
 
