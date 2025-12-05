@@ -3,65 +3,75 @@ import pandas as pd
 import requests
 import urllib.parse
 import time
+import json
+import os
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Advanced Classifier", page_icon="⚡", layout="wide")
 
 st.title("⚡ Advanced VNS Classifier")
-st.markdown("Identifies **Breakouts**, **Trend Continuation**, and **Reversal Risks (Atak)**.")
+st.markdown("Identifies **Breakouts**, **Trend Continuation**, and **Reversal Risks**. • **Auto-Saves Results**")
 
-# --- PRO CSS (HIGH CONTRAST & VISIBILITY) ---
+# --- PRO CSS (VISIBILITY & LAYOUT) ---
 st.markdown("""
 <style>
-    /* Force Light Mode for Readability */
-    .stApp { background-color: #f0f2f6; color: #000000; }
+    /* Force Light Mode */
+    .stApp { background-color: white; color: black; }
+    
+    /* VISIBILITY FIXES */
+    div[data-testid="stMetricValue"], div[data-testid="stMetricLabel"], .stMarkdown {
+        color: #000000 !important;
+    }
     
     /* CARD DESIGN */
     .class-card {
-        background-color: white;
+        background-color: #ffffff;
         padding: 15px;
         border-radius: 8px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.08);
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         margin-bottom: 12px;
         border-left-width: 6px;
         border-left-style: solid;
+        border-top: 1px solid #eee;
+        border-right: 1px solid #eee;
+        border-bottom: 1px solid #eee;
         transition: transform 0.1s;
     }
-    .class-card:hover { transform: scale(1.01); }
+    .class-card:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
     
-    /* TEXT STYLES */
-    .stock-title { font-size: 1.2rem; font-weight: 800; color: #2c3e50; }
-    .stock-price { font-size: 1.1rem; font-weight: 600; color: #333; }
-    .signal-text { font-size: 0.9rem; font-weight: 600; margin-top: 5px; color: #555; }
+    /* TEXT STYLES (Forced Colors) */
+    .stock-title { font-size: 1.2rem; font-weight: 800; color: #2c3e50 !important; }
+    .stock-price { font-size: 1.1rem; font-weight: 600; color: #333 !important; }
+    .signal-text { font-size: 0.9rem; font-weight: 600; margin-top: 5px; color: #555 !important; }
     
     /* CHANGE BADGES */
-    .chg-green { color: #008000; font-weight: bold; font-size: 0.9rem; }
-    .chg-red { color: #d63031; font-weight: bold; font-size: 0.9rem; }
+    .chg-green { color: #008000 !important; font-weight: bold; font-size: 0.9rem; }
+    .chg-red { color: #d63031 !important; font-weight: bold; font-size: 0.9rem; }
     
-    /* BORDER COLORS (Classification) */
-    .b-high-bull { border-left-color: #00b894; } /* Bright Green */
-    .b-bull { border-left-color: #55efc4; }      /* Light Green */
-    .b-high-bear { border-left-color: #d63031; } /* Bright Red */
-    .b-bear { border-left-color: #fab1a0; }      /* Light Red */
-    .b-atak-top { border-left-color: #e17055; }  /* Dark Orange */
-    .b-atak-bot { border-left-color: #fdcb6e; }  /* Yellow */
+    /* BORDER COLORS */
+    .b-high-bull { border-left-color: #00b894; } 
+    .b-bull { border-left-color: #55efc4; }      
+    .b-high-bear { border-left-color: #d63031; } 
+    .b-bear { border-left-color: #fab1a0; }      
+    .b-atak-top { border-left-color: #e17055; }  
+    .b-atak-bot { border-left-color: #fdcb6e; }  
     
-    /* LINK BUTTON STYLE */
+    /* LINK BUTTON */
     .chart-link {
-        text-decoration: none;
-        font-size: 0.8rem;
-        color: #0984e3;
-        font-weight: bold;
-        float: right;
-        margin-top: 5px;
+        text-decoration: none; font-size: 0.8rem; color: #0984e3 !important; font-weight: bold; float: right;
     }
     .chart-link:hover { text-decoration: underline; }
-
+    
+    /* Sidebar text fix */
+    .stSidebar label { color: #333 !important; }
+    
 </style>
 """, unsafe_allow_html=True)
 
 # --- CONFIGURATION ---
+CLASS_FILE = "daily_classification_results.json" 
+
 FNO_STOCKS = [
     "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
     "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
@@ -92,21 +102,53 @@ FNO_STOCKS = [
 FNO_STOCKS = sorted(list(set(FNO_STOCKS)))
 
 # --- SESSION STATE ---
-if 'classified_results' not in st.session_state:
-    st.session_state.classified_results = [] 
+if 'class_start_date' not in st.session_state:
+    st.session_state.class_start_date = datetime.now() - timedelta(days=90) # Default 3M
+if 'class_duration_label' not in st.session_state:
+    st.session_state.class_duration_label = "3M"
+
+def update_class_settings():
+    selection = st.session_state.class_duration_select
+    st.session_state.class_duration_label = selection
+    now = datetime.now()
+    if selection == "1M": st.session_state.class_start_date = now - timedelta(days=30)
+    elif selection == "3M": st.session_state.class_start_date = now - timedelta(days=90)
+    elif selection == "6M": st.session_state.class_start_date = now - timedelta(days=180)
+    elif selection == "1Y": st.session_state.class_start_date = now - timedelta(days=365)
+
+# --- SIDEBAR CONTROLS ---
+with st.sidebar:
+    st.header("⚙️ Settings")
+    
+    # 1. Period (Affects Scan Data)
+    st.subheader("1. Analysis Period")
+    st.radio("Duration", ["1M", "3M", "6M", "1Y"], index=1, horizontal=True, key="class_duration_select", on_change=update_class_settings)
+    
+    st.divider()
+    
+    # 2. View Filters (Instant)
+    st.subheader("2. View Filters")
+    c1, c2 = st.columns(2)
+    view_min = c1.number_input("Min Price", 0, value=0, step=100)
+    view_max = c2.number_input("Max Price", 0, value=100000, step=500)
+    
+    category_filter = st.selectbox("Show Category", ["All", "Bullish Only", "Bearish Only", "Atak (Reversals) Only", "Highly Bullish", "Highly Bearish"])
+    
+    st.divider()
+    force_scan = st.button("🔄 Force Refresh", type="primary", use_container_width=True)
 
 # --- CORE LOGIC ---
-def fetch_stock_data(symbol):
+def fetch_stock_data(symbol, start_date):
     try:
         safe_symbol = urllib.parse.quote(symbol)
         end = datetime.now()
-        start = end - timedelta(days=40) 
+        req_start = start_date - timedelta(days=5)
         
         headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
         s = requests.Session(); s.headers.update(headers)
         s.get("https://www.nseindia.com", timeout=3)
         
-        url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={safe_symbol}&type=priceVolumeDeliverable&series=ALL"
+        url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={req_start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={safe_symbol}&type=priceVolumeDeliverable&series=ALL"
         r = s.get(url, timeout=5)
         
         if r.status_code == 200:
@@ -134,7 +176,6 @@ def classify_stock(df):
         low_broken = c_l < p_l
         high_broken = c_h > p_h
         
-        # ATAK Logic 
         is_atak_top = last_bu and (last_bu*0.995 <= c_h <= last_bu*1.005) and c_c < last_bu
         is_atak_bot = last_be and (last_be*0.995 <= c_l <= last_be*1.005) and c_c > last_be
         
@@ -144,23 +185,19 @@ def classify_stock(df):
             if low_broken: last_bu = p_h; current_signal = "Top Made (BU)"
             if high_broken: last_be = p_l; current_signal = "Reaction Buy (Dip)"
             if is_atak_top: current_signal = "ATAK (Double Top)"
-            
         elif trend == "Bearish":
             if high_broken: last_be = p_l; current_signal = "Bottom Made (BE)"
             if low_broken: last_bu = p_h; current_signal = "Reaction Sell (Rise)"
             if is_atak_bot: current_signal = "ATAK (Double Bottom)"
-            
-        else: # Neutral
+        else: 
             if high_broken: trend="Bullish"; last_be=p_l; current_signal="Trend Start (Bull)"
             elif low_broken: trend="Bearish"; last_bu=p_h; current_signal="Trend Start (Bear)"
             
-        # Switch Logic
         if trend == "Bearish" and last_bu and c_c > last_bu:
             trend = "Bullish"; current_signal = "BREAKOUT (Fresh Teji)"
         if trend == "Bullish" and last_be and c_c < last_be:
             trend = "Bearish"; current_signal = "BREAKDOWN (Fresh Mandi)"
             
-        # Final Classification
         if i == len(df) - 1:
             signal_desc = current_signal
             if "BREAKOUT" in current_signal: category = "Highly Bullish"
@@ -170,22 +207,22 @@ def classify_stock(df):
             elif trend == "Bullish": category = "Bullish"
             elif trend == "Bearish": category = "Bearish"
 
-    # Calc % Change
     last_row = df.iloc[-1]
     pct_change = ((last_row['CH_CLOSING_PRICE'] - last_row['CH_PREVIOUS_CLS_PRICE']) / last_row['CH_PREVIOUS_CLS_PRICE']) * 100
     
     return category, signal_desc, last_row['CH_CLOSING_PRICE'], pct_change
 
-# --- UI EXECUTION ---
-
-if st.button("⚡ Start Advanced Classification Scan", type="primary"):
+def run_full_scan():
     results = []
     bar = st.progress(0)
     status = st.empty()
     
+    start_date = st.session_state.class_start_date
+    duration_used = st.session_state.class_duration_label
+    
     for i, stock in enumerate(FNO_STOCKS):
         status.caption(f"Scanning {stock}...")
-        df = fetch_stock_data(stock)
+        df = fetch_stock_data(stock, start_date)
         
         if df is not None:
             cat, sig, close, chg = classify_stock(df)
@@ -195,18 +232,64 @@ if st.button("⚡ Start Advanced Classification Scan", type="primary"):
         bar.progress((i + 1) / len(FNO_STOCKS))
         time.sleep(0.1) 
         
-    st.session_state.classified_results = results
     bar.empty(); status.empty()
-    st.success("Scan Complete!")
+    
+    # SAVE
+    save_payload = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "last_updated": datetime.now().strftime("%H:%M:%S"),
+        "duration_label": duration_used,
+        "stocks": results
+    }
+    with open(CLASS_FILE, 'w') as f: json.dump(save_payload, f)
+    
+    return save_payload
 
-# --- DISPLAY RESULTS ---
+def check_auto_scan():
+    now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    
+    if not os.path.exists(CLASS_FILE): return True, "Initial Setup"
+    try:
+        with open(CLASS_FILE, 'r') as f: data = json.load(f)
+        file_date = data.get("date")
+        # Auto Scan if old date and evening time
+        if file_date != today_str and now.hour >= 18: return True, "Daily Update"
+        return False, data
+    except: return True, "Error"
 
-if st.session_state.classified_results:
+# --- CONTROLLER ---
+should_scan, payload = check_auto_scan()
+
+if force_scan:
+    st.toast("Forcing Scan...")
+    current_data = run_full_scan()
+    st.rerun()
+elif should_scan is True:
+    st.info(f"📅 Running Auto-Scan ({payload})...")
+    current_data = run_full_scan()
+    st.rerun()
+else:
+    current_data = payload
+
+# --- DISPLAY ---
+if current_data:
+    data_dur = current_data.get('duration_label', 'Unknown')
+    st.caption(f"Last Scanned: {current_data['date']} {current_data['last_updated']} | Duration: {data_dur}")
+    
+    if data_dur != st.session_state.class_duration_label:
+        st.warning(f"⚠️ Displaying **{data_dur}** data. You selected **{st.session_state.class_duration_label}**. Click Force Refresh.")
     
     st.divider()
-    search_query = st.text_input("🔍 Search Stock", placeholder="e.g. RELIANCE").upper()
     
-    data = st.session_state.classified_results
+    # 1. SEARCH
+    search_query = st.text_input("🔍 Search Stock", placeholder="e.g. RELIANCE").upper()
+    data = current_data['stocks']
+    
+    # 2. APPLY PRICE FILTER
+    data = [d for d in data if view_min <= d['Price'] <= view_max]
+    
+    # 3. APPLY SEARCH
     if search_query: data = [d for d in data if search_query in d['Symbol']]
         
     # Buckets
@@ -217,17 +300,40 @@ if st.session_state.classified_results:
     atak_teji = [d for d in data if d['Category'] == "Atak (Teji Side)"]
     atak_mandi = [d for d in data if d['Category'] == "Atak (Mandi Side)"]
     
-    # Render Function
+    # 4. CATEGORY FILTER LOGIC
+    cats_to_show = []
+    sel_cat = category_filter
+    
+    if sel_cat == "All":
+        cats_to_show = [
+            ("🚀 Highly Bullish", high_bull, "b-high-bull"),
+            ("🟢 Bullish", bull, "b-bull"),
+            ("🩸 Highly Bearish", high_bear, "b-high-bear"),
+            ("🔴 Bearish", bear, "b-bear"),
+            ("⚠️ Atak on Teji", atak_teji, "b-atak-top"),
+            ("🛡️ Atak on Mandi", atak_mandi, "b-atak-bot")
+        ]
+    elif sel_cat == "Bullish Only":
+        cats_to_show = [("🟢 Bullish", bull, "b-bull")]
+    elif sel_cat == "Bearish Only":
+        cats_to_show = [("🔴 Bearish", bear, "b-bear")]
+    elif sel_cat == "Highly Bullish":
+        cats_to_show = [("🚀 Highly Bullish", high_bull, "b-high-bull")]
+    elif sel_cat == "Highly Bearish":
+        cats_to_show = [("🩸 Highly Bearish", high_bear, "b-high-bear")]
+    elif sel_cat == "Atak (Reversals) Only":
+        cats_to_show = [
+            ("⚠️ Atak on Teji", atak_teji, "b-atak-top"),
+            ("🛡️ Atak on Mandi", atak_mandi, "b-atak-bot")
+        ]
+
     def render_category(title, items, border_class):
         with st.expander(f"{title} ({len(items)})", expanded=True):
-            if not items: st.caption("No stocks found.")
+            if not items: st.caption("No stocks.")
             
             for item in items:
-                # Color code % change
                 chg_color = "chg-green" if item['Change'] >= 0 else "chg-red"
                 chg_sign = "+" if item['Change'] >= 0 else ""
-                
-                # TradingView Link
                 tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{item['Symbol']}"
                 
                 st.markdown(f"""
@@ -244,19 +350,23 @@ if st.session_state.classified_results:
                 </div>
                 """, unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns(3)
-    
-    with c1:
-        render_category("🚀 Highly Bullish (Breakout)", high_bull, "b-high-bull")
-        render_category("🔴 Bearish (Trend)", bear, "b-bear")
-        
-    with c2:
-        render_category("🟢 Bullish (Trend)", bull, "b-bull")
-        render_category("⚠️ Atak on Teji (Top)", atak_teji, "b-atak-top")
-        
-    with c3:
-        render_category("🩸 Highly Bearish (Breakdown)", high_bear, "b-high-bear")
-        render_category("🛡️ Atak on Mandi (Bottom)", atak_mandi, "b-atak-bot")
-
-else:
-    st.info("Click the button above to scan.")
+    # Render in Columns if showing All, else Stack
+    if sel_cat == "All":
+        c1, c2, c3 = st.columns(3)
+        # Distribution logic
+        # Col 1: High Bull, Bear
+        with c1: 
+            render_category(cats_to_show[0][0], cats_to_show[0][1], cats_to_show[0][2])
+            render_category(cats_to_show[3][0], cats_to_show[3][1], cats_to_show[3][2])
+        # Col 2: Bull, Atak Top
+        with c2: 
+            render_category(cats_to_show[1][0], cats_to_show[1][1], cats_to_show[1][2])
+            render_category(cats_to_show[4][0], cats_to_show[4][1], cats_to_show[4][2])
+        # Col 3: High Bear, Atak Bot
+        with c3: 
+            render_category(cats_to_show[2][0], cats_to_show[2][1], cats_to_show[2][2])
+            render_category(cats_to_show[5][0], cats_to_show[5][1], cats_to_show[5][2])
+    else:
+        # Single column layout for filtered view
+        for cat in cats_to_show:
+            render_category(cat[0], cat[1], cat[2])
