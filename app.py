@@ -11,18 +11,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- MOBILE FRIENDLY CSS ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: #f8f9fa; }
     div[data-testid="stMetricValue"] { font-size: 1.5rem; font-weight: bold; }
     
-    .status-bull { background-color: #d4edda; color: #155724; padding: 6px 12px; border-radius: 6px; font-weight: bold; border-left: 5px solid #28a745; display: inline-block; }
-    .status-bear { background-color: #f8d7da; color: #721c24; padding: 6px 12px; border-radius: 6px; font-weight: bold; border-left: 5px solid #dc3545; display: inline-block; }
-    .status-neutral { background-color: #e2e3e5; color: #383d41; padding: 6px 12px; border-radius: 6px; font-weight: bold; display: inline-block; }
-    
-    /* Tabs */
-    div[role="radiogroup"] > label > div:first-child { background-color: #fff; border: 1px solid #ddd; }
+    /* Excel-like Table Styling */
+    .dataframe { font-family: Arial, sans-serif; font-size: 14px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -41,7 +37,7 @@ STOCK_LIST.sort()
 
 # --- SESSION STATE ---
 if 'start_date' not in st.session_state:
-    st.session_state.start_date = datetime.now() - timedelta(days=30)
+    st.session_state.start_date = datetime.now() - timedelta(days=60) # Default 2M
 if 'end_date' not in st.session_state:
     st.session_state.end_date = datetime.now()
 
@@ -61,7 +57,7 @@ with st.sidebar:
     selected_stock = st.selectbox("Select Stock", STOCK_LIST, index=STOCK_LIST.index("KOTAKBANK") if "KOTAKBANK" in STOCK_LIST else 0)
     st.divider()
     st.subheader("Time Period")
-    st.radio("Quick Select:", ["1M", "3M", "6M", "1Y", "YTD", "Custom"], index=0, horizontal=True, key="duration_selector", on_change=update_dates)
+    st.radio("Quick Select:", ["1M", "3M", "6M", "1Y", "YTD", "Custom"], index=1, horizontal=True, key="duration_selector", on_change=update_dates)
     date_range = st.date_input("Date Range", value=(st.session_state.start_date, st.session_state.end_date), min_value=datetime(2000, 1, 1), max_value=datetime.now())
     if len(date_range) == 2:
         st.session_state.start_date = datetime.combine(date_range[0], datetime.min.time())
@@ -89,116 +85,88 @@ def fetch_nse_data(symbol, start, end):
     except: return None
     return None
 
-# --- VNS LOGIC ENGINE (UPDATED FROM EXCEL) ---
+# --- VNS LOGIC (EXCEL STYLE) ---
 def analyze_vns(df):
-    results = []
+    # Initialize columns as Object (String) to hold text
+    df['BU'] = ""
+    df['BE'] = ""
+    
     trend = "Neutral"
     
-    # Track the last established levels to determine signals
-    last_bu = None
-    last_be = None
-    
-    for i in range(len(df)):
-        row = df.iloc[i]
-        prev = df.iloc[i-1] if i > 0 else None
+    # We loop through index to allow "Look Back" editing
+    for i in range(1, len(df)):
+        curr_row = df.iloc[i]
+        prev_row = df.iloc[i-1]
         
-        bu = None
-        be = None
-        signal = ""
-        signal_type = ""
+        curr_high = curr_row['CH_TRADE_HIGH_PRICE']
+        curr_low = curr_row['CH_TRADE_LOW_PRICE']
+        prev_high = prev_row['CH_TRADE_HIGH_PRICE']
+        prev_low = prev_row['CH_TRADE_LOW_PRICE']
         
-        if prev is not None:
-            curr_high = row['CH_TRADE_HIGH_PRICE']
-            curr_low = row['CH_TRADE_LOW_PRICE']
-            prev_high = prev['CH_TRADE_HIGH_PRICE']
-            prev_low = prev['CH_TRADE_LOW_PRICE']
-            
-            # --- BREAK TRIGGERS ---
-            low_broken = curr_low < prev_low
-            high_broken = curr_high > prev_high
-            
-            # --- SIGNAL LOGIC ---
-            
-            # 1. BULLISH SCENARIO (Teji)
-            if trend == "Bullish":
-                # High Broken -> Reaction Support (BE)
-                if high_broken:
-                    # Logic: Normally Prev Low, but if Outside Bar (Curr Low < Prev Low), mark Curr Low
-                    val = min(prev_low, curr_low)
-                    be = val
-                    last_be = val
-                    signal = "Reaction of Teji"
-                    signal_type = "info"
+        # 1. Check Breaks
+        low_broken = curr_low < prev_low
+        high_broken = curr_high > prev_high
+        
+        # 2. Logic Machine
+        
+        # --- IF TREND IS BULLISH (Teji) ---
+        if trend == "Bullish":
+            # A. Low Broken -> This confirms the TOP.
+            if low_broken:
+                # Mark the Previous Day (Source of High) as BU
+                date_str = prev_row['Date'].strftime('%-d-%b-%y').upper()
+                df.at[i-1, 'BU'] = f"BU(T) {date_str}\n{prev_high}"
                 
-                # Low Broken -> Trend Top (BU)
-                if low_broken:
-                    val = prev_high
-                    bu = val
-                    last_bu = val
-                    signal = "BU (T)"
-                    signal_type = "bull"
-                    
-                    # Check for Reversal (Double Top / Breakout Fail)
-                    if last_bu and curr_high < last_bu and row['CH_CLOSING_PRICE'] < prev_low:
-                         # Potential trend shift logic could go here
-                         pass
-
-            # 2. BEARISH SCENARIO (Mandi)
-            elif trend == "Bearish":
-                # High Broken -> Trend Bottom (BE)
-                if high_broken:
-                    val = prev_low
-                    be = val
-                    last_be = val
-                    signal = "BE (M)"
-                    signal_type = "bear"
+                # Check for Reversal (Breakout Failure / Double Top logic can be added here)
                 
-                # Low Broken -> Reaction Resistance (BU)
-                if low_broken:
-                    # Logic: Normally Prev High, but if Outside Bar (Curr High > Prev High), mark Curr High
-                    val = max(prev_high, curr_high)
-                    bu = val
-                    last_bu = val
-                    signal = "Reaction of Mandi"
-                    signal_type = "info" # Reactions are blue/info
+            # B. High Broken -> This confirms the Dip was just a Reaction.
+            if high_broken:
+                # Mark the Previous Day (Source of Low) as Reaction Support
+                # Note: If it's an outside bar scenario, we might need more complex logic, 
+                # but standard VNS marks the previous low.
+                date_str = prev_row['Date'].strftime('%-d-%b-%y').upper()
+                df.at[i-1, 'BE'] = f"R(Reaction of Teji)\n{prev_low}"
 
-            # 3. NEUTRAL / STARTUP
-            else:
-                if high_broken:
-                    trend = "Bullish"
-                    signal = "Trend Start (Teji)"
-                    signal_type = "bull"
-                elif low_broken:
-                    trend = "Bearish"
-                    signal = "Trend Start (Mandi)"
-                    signal_type = "bear"
-            
-            # --- TREND SWITCH CHECKS ---
-            # If we are in Mandi, but we break the last Reaction High (BU) -> Switch to Teji
-            if trend == "Bearish" and last_bu and row['CH_CLOSING_PRICE'] > last_bu:
+        # --- IF TREND IS BEARISH (Mandi) ---
+        elif trend == "Bearish":
+            # A. High Broken -> This confirms the BOTTOM.
+            if high_broken:
+                # Mark the Previous Day (Source of Low) as BE
+                date_str = prev_row['Date'].strftime('%-d-%b-%y').upper()
+                df.at[i-1, 'BE'] = f"BE(M) {date_str}\n{prev_low}"
+                
+            # B. Low Broken -> This confirms the Rally was just a Reaction.
+            if low_broken:
+                # Mark the Previous Day (Source of High) as Reaction Resistance
+                date_str = prev_row['Date'].strftime('%-d-%b-%y').upper()
+                df.at[i-1, 'BU'] = f"R(Reaction of Mandi) {date_str}\n{prev_high}"
+
+        # --- IF NEUTRAL (Startup) ---
+        else:
+            if high_broken:
                 trend = "Bullish"
-                signal = "TEJI (Breakout)"
-                signal_type = "bull"
-            
-            # If we are in Teji, but we break the last Reaction Low (BE) -> Switch to Mandi
-            if trend == "Bullish" and last_be and row['CH_CLOSING_PRICE'] < last_be:
+                date_str = prev_row['Date'].strftime('%-d-%b-%y').upper()
+                # Mark start of Teji
+                df.at[i-1, 'BE'] = f"Start Teji\n{prev_low}"
+            elif low_broken:
                 trend = "Bearish"
-                signal = "MANDI (Breakdown)"
-                signal_type = "bear"
-
-        results.append({
-            'Date': row['Date'], 
-            'Open': row['CH_OPENING_PRICE'], 
-            'High': row['CH_TRADE_HIGH_PRICE'],
-            'Low': row['CH_TRADE_LOW_PRICE'], 
-            'Close': row['CH_CLOSING_PRICE'],
-            'BU (Resist)': bu, 
-            'BE (Support)': be, 
-            'Signal': signal, 
-            'Type': signal_type
-        })
+                date_str = prev_row['Date'].strftime('%-d-%b-%y').upper()
+                # Mark start of Mandi
+                df.at[i-1, 'BU'] = f"Start Mandi\n{prev_high}"
         
-    return pd.DataFrame(results), trend, last_bu, last_be
+        # --- TREND SWITCHING ---
+        # Check if we broke a MAJOR level established in the text
+        # (This is complex to parse back from text, so we track logic state essentially)
+        # For simple visual replication, the logic above covers the labeling.
+        # To strictly switch trend variable:
+        
+        # If in Bearish, and we break a confirmed BU level -> Switch to Bullish
+        # If in Bullish, and we break a confirmed BE level -> Switch to Bearish
+        # (Simplified for this display version)
+        if trend == "Bearish" and df.at[i-1, 'BU'] and "BU" in str(df.at[i-1, 'BU']) and curr_high > prev_high: 
+             trend = "Bullish" # Potential switch
+        
+    return df
 
 # --- OUTPUT ---
 st.title(f"📊 VNS Theory: {selected_stock}")
@@ -208,38 +176,29 @@ if run_btn:
     with st.spinner(f"Fetching data for {selected_stock}..."):
         raw_df = fetch_nse_data(selected_stock, st.session_state.start_date, st.session_state.end_date)
         if raw_df is not None:
-            analyzed_df, trend, final_bu, final_be = analyze_vns(raw_df)
+            analyzed_df = analyze_vns(raw_df)
             
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.caption("Current Trend")
-                if trend == "Bullish": st.markdown('<div class="status-bull">BULLISH (TEJI)</div>', unsafe_allow_html=True)
-                elif trend == "Bearish": st.markdown('<div class="status-bear">BEARISH (MANDI)</div>', unsafe_allow_html=True)
-                else: st.markdown('<div class="status-neutral">NEUTRAL</div>', unsafe_allow_html=True)
-            with c2: st.metric("Close", f"{analyzed_df.iloc[-1]['Close']:.2f}")
-            with c3: st.metric("Res (BU)", f"{final_bu:.2f}" if final_bu else "-")
-            with c4: st.metric("Sup (BE)", f"{final_be:.2f}" if final_be else "-")
+            # --- DISPLAY TABLE (EXCEL LAYOUT) ---
+            # Format numbers and dates
+            display_df = analyzed_df[['Date', 'CH_OPENING_PRICE', 'CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_CLOSING_PRICE', 'BU', 'BE']].copy()
+            display_df.columns = ['Date', 'OPEN', 'HIGH', 'LOW', 'CLOSE', 'BU (High is Higher)', 'BE (Low is Lower)']
             
-            st.divider()
-
-            def style_vns(row):
-                s = row['Type']
-                bull = 'background-color: #d4edda; color: #155724; font-weight: bold'
-                bear = 'background-color: #f8d7da; color: #721c24; font-weight: bold'
-                warn = 'background-color: #fff3cd; color: #856404; font-weight: bold'
-                info = 'background-color: #e2e6ea; color: #0c5460; font-style: italic'
-                if s == 'bull': return [bull] * len(row)
-                if s == 'bear': return [bear] * len(row)
-                if s == 'warn': return [warn] * len(row)
-                if s == 'info': return [info] * len(row)
+            # Helper to style rows
+            def style_excel(row):
                 return [''] * len(row)
 
+            # Show Dataframe
             st.dataframe(
-                analyzed_df.style.apply(style_vns, axis=1).format({
-                    "Date": lambda t: t.strftime("%d-%b-%Y"), "Open": "{:.2f}", "High": "{:.2f}", 
-                    "Low": "{:.2f}", "Close": "{:.2f}", "BU (Resist)": "{:.2f}", "BE (Support)": "{:.2f}"
-                }, na_rep=""),
-                column_config={"Type": None}, use_container_width=True, height=600
+                display_df.style.format({
+                    "Date": lambda t: t.strftime("%d-%b-%Y"),
+                    "OPEN": "{:.2f}", "HIGH": "{:.2f}", "LOW": "{:.2f}", "CLOSE": "{:.2f}"
+                }),
+                use_container_width=True,
+                height=800,
+                column_config={
+                    "BU (High is Higher)": st.column_config.TextColumn(width="medium"),
+                    "BE (Low is Lower)": st.column_config.TextColumn(width="medium")
+                }
             )
         else: st.error("⚠️ Could not fetch data.")
 else: st.info("👈 Select options and click RUN.")
