@@ -1,54 +1,60 @@
 import streamlit as st
 import pandas as pd
 import requests
+import urllib.parse
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS (THEME SAFE) ---
+# --- CUSTOM CSS (Clean Up) ---
 st.markdown("""
 <style>
-    /* badges for Trend */
-    .status-bull { 
-        background-color: #d1e7dd; 
-        color: #0f5132; 
-        padding: 10px 20px; 
-        border-radius: 8px; 
-        font-weight: bold; 
-        text-align: center; 
-        border: 1px solid #badbcc;
-        font-size: 1.2rem;
-    }
-    .status-bear { 
-        background-color: #f8d7da; 
-        color: #842029; 
-        padding: 10px 20px; 
-        border-radius: 8px; 
-        font-weight: bold; 
-        text-align: center; 
-        border: 1px solid #f5c2c7;
-        font-size: 1.2rem;
-    }
-    .status-neutral { 
-        background-color: #e2e3e5; 
-        color: #41464b; 
-        padding: 10px 20px; 
-        border-radius: 8px; 
-        font-weight: bold; 
-        text-align: center; 
-        border: 1px solid #d3d6d8;
-        font-size: 1.2rem;
-    }
-    
-    /* Make the Dataframe text larger */
+    .stApp { background-color: white; }
+    /* Make the table text larger and readable */
     .stDataFrame { font-size: 1.1rem; }
+    
+    /* Overall Trend Header Styles */
+    .trend-box {
+        padding: 10px;
+        border-radius: 5px;
+        text-align: center;
+        font-weight: bold;
+        font-size: 1.2rem;
+        margin-bottom: 10px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- CONFIG ---
-STOCK_LIST = ["RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "ITC", "SBIN", "BHARTIARTL", "L&T", "AXISBANK", "KOTAKBANK", "HINDUNILVR", "TATAMOTORS", "MARUTI", "HCLTECH", "SUNPHARMA", "TITAN", "BAJFINANCE", "ULTRACEMCO", "ASIANPAINT", "NTPC", "POWERGRID", "M&M", "ADANIENT", "ADANIPORTS", "COALINDIA", "WIPRO", "BAJAJFINSV", "NESTLEIND", "JSWSTEEL", "GRASIM", "ONGC", "TATASTEEL", "HDFCLIFE", "SBILIFE", "DRREDDY", "EICHERMOT", "CIPLA", "DIVISLAB", "BPCL", "HINDALCO", "HEROMOTOCO", "APOLLOHOSP", "TATACONSUM", "BRITANNIA", "UPL", "ZOMATO", "PAYTM", "DLF", "INDIGO", "HAL", "BEL", "VBL", "TRENT", "JIOFIN", "ADANIPOWER", "IRFC", "PFC", "RECLTD", "BHEL"]
-STOCK_LIST.sort()
+# --- YOUR CUSTOM STOCK LIST ---
+STOCK_LIST = [
+    "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
+    "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
+    "ASTRAL", "AUROPHARMA", "DMART", "AXISBANK", "BSE", "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", 
+    "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BDL", "BEL", "BHARATFORG", "BHEL", "BPCL", 
+    "BHARTIARTL", "BIOCON", "BLUESTARCO", "BOSCHLTD", "BRITANNIA", "CGPOWER", "CANBK", "CDSL", 
+    "CHOLAFIN", "CIPLA", "COALINDIA", "COFORGE", "COLPAL", "CAMS", "CONCOR", "CROMPTON", 
+    "CUMMINSIND", "CYIENT", "DLF", "DABUR", "DALBHARAT", "DELHIVERY", "DIVISLAB", "DIXON", 
+    "DRREDDY", "EICHERMOT", "EXIDEIND", "NYKAA", "FORTIS", "GAIL", "GMRAIRPORT", "GLENMARK", 
+    "GODREJCP", "GODREJPROP", "GRASIM", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HFCL", 
+    "HAVELLS", "HEROMOTOCO", "HINDALCO", "HAL", "HINDPETRO", "HINDUNILVR", "HINDZINC", "POWERINDIA", 
+    "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB", "IIFL", "ITC", "INDIANB", "IEX", 
+    "IOC", "IRCTC", "IRFC", "IREDA", "INDUSTOWER", "INDUSINDBK", "NAUKRI", "INFY", "INOXWIND", 
+    "INDIGO", "JINDALSTEL", "JSWENERGY", "JSWSTEEL", "JIOFIN", "JUBLFOOD", "KEI", "KPITTECH", 
+    "KALYANKJIL", "KAYNES", "KFINTECH", "KOTAKBANK", "LTF", "LICHSGFIN", "LTIM", "LT", "LAURUSLABS", 
+    "LICI", "LODHA", "LUPIN", "M&M", "MANAPPURAM", "MANKIND", "MARICO", "MARUTI", "MFSL", 
+    "MAXHEALTH", "MAZDOCK", "MPHASIS", "MCX", "MUTHOOTFIN", "NBCC", "NCC", "NHPC", "NMDC", 
+    "NTPC", "NATIONALUM", "NESTLEIND", "NUVAMA", "OBEROIRLTY", "ONGC", "OIL", "PAYTM", "OFSS", 
+    "POLICYBZR", "PGEL", "PIIND", "PNBHOUSING", "PAGEIND", "PATANJALI", "PERSISTENT", "PETRONET", 
+    "PIDILITIND", "PPLPHARMA", "POLYCAB", "PFC", "POWERGRID", "PRESTIGE", "PNB", "RBLBANK", 
+    "RECLTD", "RVNL", "RELIANCE", "SBICARD", "SBILIFE", "SHREECEM", "SRF", "SAMMAANCAP", 
+    "MOTHERSON", "SHRIRAMFIN", "SIEMENS", "SOLARINDS", "SONACOMS", "SBIN", "SAIL", "SUNPHARMA", 
+    "SUPREMEIND", "SUZLON", "SYNGENE", "TATACONSUM", "TITAGARH", "TVSMOTOR", "TCS", "TATAELXSI", 
+    "TATAPOWER", "TATASTEEL", "TATATECH", "TECHM", "FEDERALBNK", "INDHOTEL", "PHOENIXLTD", 
+    "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", "TIINDIA", "UNOMINDA", "UPL", "ULTRACEMCO", 
+    "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "IDEA", "VOLTAS", "WIPRO", "YESBANK", "ZYDUSLIFE"
+]
+STOCK_LIST = sorted(list(set(STOCK_LIST))) # Sort and remove any accidental duplicates
 
 # --- STATE ---
 if 'start_date' not in st.session_state: st.session_state.start_date = datetime.now() - timedelta(days=60)
@@ -76,10 +82,16 @@ with st.sidebar:
 @st.cache_data(ttl=300)
 def fetch_data(symbol, start, end):
     try:
+        # Encode symbol (Handles M&M becoming M%26M)
+        safe_symbol = urllib.parse.quote(symbol)
+        
         headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
         s = requests.Session(); s.headers.update(headers); s.get("https://www.nseindia.com", timeout=5)
-        url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={symbol}&type=priceVolumeDeliverable&series=ALL"
+        
+        # Use safe_symbol in URL
+        url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={safe_symbol}&type=priceVolumeDeliverable&series=ALL"
         r = s.get(url, timeout=10)
+        
         if r.status_code == 200:
             df = pd.DataFrame(r.json().get('data', []))
             if df.empty: return None
@@ -92,9 +104,12 @@ def fetch_data(symbol, start, end):
 
 # --- LOGIC ---
 def analyze_vns(df):
-    df['BU'], df['BE'], df['Type'] = "", "", ""
+    df['BU'], df['BE'] = "", ""
+    df['Type'] = "" # Helper for styling
     trend = "Neutral"
-    last_bu, last_be = None, None
+    
+    last_bu = None
+    last_be = None
     
     for i in range(1, len(df)):
         curr = df.iloc[i]; prev = df.iloc[i-1]
@@ -110,26 +125,28 @@ def analyze_vns(df):
 
         # TREND
         if trend == "Bullish":
-            if c_l < p_l: 
+            if c_l < p_l: # Low Broken
                 df.at[i-1, 'BU'] = f"BU(T) {d_str} : {p_h}"; df.at[i-1, 'Type']="bull"; last_bu = p_h
-            if c_h > p_h: 
+            if c_h > p_h: # High Broken
                 df.at[i-1, 'BE'] = f"R(Teji) : {p_l}"; df.at[i-1, 'Type']="info"; last_be = p_l
         
         elif trend == "Bearish":
-            if c_h > p_h: 
+            if c_h > p_h: # High Broken
                 df.at[i-1, 'BE'] = f"BE(M) {d_str} : {p_l}"; df.at[i-1, 'Type']="bear"; last_be = p_l
-            if c_l < p_l: 
+            if c_l < p_l: # Low Broken
                 df.at[i-1, 'BU'] = f"R(Mandi) {d_str} : {p_h}"; df.at[i-1, 'Type']="info"; last_bu = p_h
                 
         else: # Neutral
-            if c_h > p_h: trend="Bullish"; df.at[i-1, 'BE']=f"Start Teji : {p_l}"; df.at[i-1, 'Type']="bull"; last_be=p_l
-            elif c_l < p_l: trend="Bearish"; df.at[i-1, 'BU']=f"Start Mandi : {p_h}"; df.at[i-1, 'Type']="bear"; last_bu=p_h
+            if c_h > p_h: 
+                trend = "Bullish"; df.at[i-1, 'BE'] = f"Start Teji : {p_l}"; df.at[i-1, 'Type']="bull"; last_be = p_l
+            elif c_l < p_l: 
+                trend = "Bearish"; df.at[i-1, 'BU'] = f"Start Mandi : {p_h}"; df.at[i-1, 'Type']="bear"; last_bu = p_h
             
         # SWITCH
         if trend == "Bearish" and last_bu and c_c > last_bu:
-            trend="Bullish"; df.at[i, 'BU']="BREAKOUT (Teji)"; df.at[i, 'Type']="bull"
+            trend = "Bullish"; df.at[i, 'BU'] = "BREAKOUT (Teji)"; df.at[i, 'Type']="bull"
         if trend == "Bullish" and last_be and c_c < last_be:
-            trend="Bearish"; df.at[i, 'BE']="BREAKDOWN (Mandi)"; df.at[i, 'Type']="bear"
+            trend = "Bearish"; df.at[i, 'BE'] = "BREAKDOWN (Mandi)"; df.at[i, 'Type']="bear"
             
     return df, trend, last_bu, last_be
 
@@ -144,28 +161,26 @@ if run_btn:
             df, final_trend, final_res, final_sup = analyze_vns(raw_df)
             
             # --- OVERALL TREND HEADER ---
-            # Used st.markdown for badges instead of st.caption which is hard to read
             c1, c2, c3, c4 = st.columns(4)
-            
             with c1:
-                st.markdown("**Overall Trend**")
+                st.write("**Overall Trend**")
                 if final_trend == "Bullish":
-                    st.markdown('<div class="status-bull">BULLISH (TEJI)</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="trend-box" style="background-color:#d1e7dd; color:#0f5132; border:1px solid #badbcc;">BULLISH (TEJI)</div>', unsafe_allow_html=True)
                 elif final_trend == "Bearish":
-                    st.markdown('<div class="status-bear">BEARISH (MANDI)</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="trend-box" style="background-color:#f8d7da; color:#842029; border:1px solid #f5c2c7;">BEARISH (MANDI)</div>', unsafe_allow_html=True)
                 else:
-                    st.markdown('<div class="status-neutral">NEUTRAL</div>', unsafe_allow_html=True)
-            
+                    st.markdown('<div class="trend-box" style="background-color:#e2e3e5; color:#41464b; border:1px solid #d3d6d8;">NEUTRAL</div>', unsafe_allow_html=True)
             with c2: st.metric("Last Close", f"{df.iloc[-1]['CH_CLOSING_PRICE']:.2f}")
             with c3: st.metric("Active Resistance", f"{final_res:.2f}" if final_res else "-")
             with c4: st.metric("Active Support", f"{final_sup:.2f}" if final_sup else "-")
             
             st.divider()
             
-            # --- TABLE ---
+            # --- PREPARE CLEAN TABLE ---
             disp_df = df[['Date', 'CH_OPENING_PRICE', 'CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_CLOSING_PRICE', 'BU', 'BE', 'Type']].copy()
             disp_df.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'BU (Resist)', 'BE (Support)', 'Type']
             
+            # --- COLOR STYLING ---
             def color_rows(row):
                 s = row['Type']
                 if s == 'bull': return ['background-color: #C6EFCE; color: #006100; font-weight: bold'] * len(row)
@@ -183,5 +198,5 @@ if run_btn:
                 use_container_width=True,
                 height=800
             )
-        else: st.error("⚠️ Data Error")
+        else: st.error("⚠️ Data Error. Symbol might be invalid or NSE blocking requests.")
 else: st.info("👈 Click RUN")
