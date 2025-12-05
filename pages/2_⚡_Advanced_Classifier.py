@@ -131,4 +131,143 @@ def fetch_stock_data(symbol, start_date):
             if df.empty: return None
             df = df[df['CH_SERIES'] == 'EQ']
             df['Date'] = pd.to_datetime(df['mTIMESTAMP'])
-            for c in ['CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_OPENING_PRICE', 'CH_CLOSING_PRICE
+            for c in ['CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_OPENING_PRICE', 'CH_CLOSING_PRICE', 'CH_PREVIOUS_CLS_PRICE']: 
+                df[c] = df[c].astype(float)
+            return df.sort_values('Date').reset_index(drop=True)
+    except: return None
+    return None
+
+def classify_stock(df):
+    trend = "Neutral"; last_bu = None; last_be = None; signal_desc = "Neutral"; category = "Neutral"
+    
+    for i in range(1, len(df)):
+        row = df.iloc[i]; prev = df.iloc[i-1]
+        c_h, c_l, c_c = row['CH_TRADE_HIGH_PRICE'], row['CH_TRADE_LOW_PRICE'], row['CH_CLOSING_PRICE']
+        p_h, p_l = prev['CH_TRADE_HIGH_PRICE'], prev['CH_TRADE_LOW_PRICE']
+        low_broken = c_l < p_l; high_broken = c_h > p_h
+        
+        is_atak_top = last_bu and (last_bu*0.995 <= c_h <= last_bu*1.005) and c_c < last_bu
+        is_atak_bot = last_be and (last_be*0.995 <= c_l <= last_be*1.005) and c_c > last_be
+        
+        current_signal = ""
+        
+        if trend == "Bullish":
+            if low_broken: last_bu = p_h; current_signal = "Top Made (BU)"
+            if high_broken: last_be = p_l; current_signal = "Reaction Buy (Dip)"
+            if is_atak_top: current_signal = "ATAK (Double Top)"
+        elif trend == "Bearish":
+            if high_broken: last_be = p_l; current_signal = "Bottom Made (BE)"
+            if low_broken: last_bu = p_h; current_signal = "Reaction Sell (Rise)"
+            if is_atak_bot: current_signal = "ATAK (Double Bottom)"
+        else: 
+            if high_broken: trend="Bullish"; last_be=p_l; current_signal="Trend Start (Bull)"
+            elif low_broken: trend="Bearish"; last_bu=p_h; current_signal="Trend Start (Bear)"
+            
+        if trend == "Bearish" and last_bu and c_c > last_bu: trend = "Bullish"; current_signal = "BREAKOUT (Fresh Teji)"
+        if trend == "Bullish" and last_be and c_c < last_be: trend = "Bearish"; current_signal = "BREAKDOWN (Fresh Mandi)"
+            
+        if i == len(df) - 1:
+            signal_desc = current_signal
+            if "BREAKOUT" in current_signal: category = "Highly Bullish"
+            elif "BREAKDOWN" in current_signal: category = "Highly Bearish"
+            elif "ATAK (Double Top)" in current_signal: category = "Atak (Teji Side)"
+            elif "ATAK (Double Bottom)" in current_signal: category = "Atak (Mandi Side)"
+            elif trend == "Bullish": category = "Bullish"
+            elif trend == "Bearish": category = "Bearish"
+
+    last = df.iloc[-1]
+    pct = ((last['CH_CLOSING_PRICE'] - last['CH_PREVIOUS_CLS_PRICE']) / last['CH_PREVIOUS_CLS_PRICE']) * 100
+    return category, signal_desc, last['CH_CLOSING_PRICE'], pct
+
+def run_full_scan():
+    results = []; bar = st.progress(0); status = st.empty()
+    start_date = st.session_state.class_start_date
+    duration_used = st.session_state.class_duration_label
+    
+    for i, stock in enumerate(FNO_STOCKS):
+        status.caption(f"Scanning {stock}...")
+        df = fetch_stock_data(stock, start_date)
+        if df is not None:
+            cat, sig, close, chg = classify_stock(df)
+            if close > 0: results.append({ "Symbol": stock, "Price": close, "Change": chg, "Category": cat, "Signal": sig })
+        bar.progress((i + 1) / len(FNO_STOCKS)); time.sleep(0.1) 
+        
+    bar.empty(); status.empty()
+    save_payload = { "date": datetime.now().strftime("%Y-%m-%d"), "last_updated": datetime.now().strftime("%H:%M:%S"), "duration_label": duration_used, "stocks": results }
+    with open(CLASS_FILE, 'w') as f: json.dump(save_payload, f)
+    return save_payload
+
+def check_auto_scan():
+    now = datetime.now(); today_str = now.strftime("%Y-%m-%d")
+    if not os.path.exists(CLASS_FILE): return True, "Initial Setup"
+    try:
+        with open(CLASS_FILE, 'r') as f: data = json.load(f)
+        if data.get("date") != today_str and now.hour >= 18: return True, "Daily Update"
+        return False, data
+    except: return True, "Error"
+
+# --- MAIN ---
+should_scan, payload = check_auto_scan()
+if force_scan: st.toast("Scanning..."); current_data = run_full_scan(); st.rerun()
+elif should_scan is True: st.info(f"Auto-Scan... {payload}"); current_data = run_full_scan(); st.rerun()
+else: current_data = payload
+
+# --- DISPLAY ---
+if current_data:
+    st.caption(f"Last Scanned: {current_data['date']} {current_data['last_updated']} | Duration: {current_data.get('duration_label', 'Unknown')}")
+    
+    if current_data.get('duration_label') != st.session_state.class_duration_label:
+        st.warning(f"Data is {current_data.get('duration_label')}. You selected {st.session_state.class_duration_label}. Click Force Refresh.")
+    
+    st.divider()
+    search_query = st.text_input("🔍 Search Stock", placeholder="e.g. RELIANCE").upper()
+    data = current_data['stocks']
+    
+    # Filters
+    data = [d for d in data if view_min <= d['Price'] <= view_max]
+    if search_query: data = [d for d in data if search_query in d['Symbol']]
+        
+    # Buckets
+    high_bull = [d for d in data if d['Category'] == "Highly Bullish"]
+    bull = [d for d in data if d['Category'] == "Bullish"]
+    high_bear = [d for d in data if d['Category'] == "Highly Bearish"]
+    bear = [d for d in data if d['Category'] == "Bearish"]
+    atak_teji = [d for d in data if d['Category'] == "Atak (Teji Side)"]
+    atak_mandi = [d for d in data if d['Category'] == "Atak (Mandi Side)"]
+    
+    cats_to_show = []
+    if category_filter == "All":
+        cats_to_show = [("🚀 Highly Bullish", high_bull, "b-high-bull"), ("🟢 Bullish", bull, "b-bull"), ("🩸 Highly Bearish", high_bear, "b-high-bear"), ("🔴 Bearish", bear, "b-bear"), ("⚠️ Atak on Teji", atak_teji, "b-atak-top"), ("🛡️ Atak on Mandi", atak_mandi, "b-atak-bot")]
+    elif category_filter == "Bullish Only": cats_to_show = [("🟢 Bullish", bull, "b-bull")]
+    elif category_filter == "Bearish Only": cats_to_show = [("🔴 Bearish", bear, "b-bear")]
+    elif category_filter == "High Momentum Only": cats_to_show = [("🚀 Highly Bullish", high_bull, "b-high-bull"), ("🩸 Highly Bearish", high_bear, "b-high-bear")]
+    elif category_filter == "Atak Only": cats_to_show = [("⚠️ Atak on Teji", atak_teji, "b-atak-top"), ("🛡️ Atak on Mandi", atak_mandi, "b-atak-bot")]
+
+    def render_category(title, items, border_class):
+        with st.expander(f"{title} ({len(items)})", expanded=True):
+            if not items: st.caption("No stocks.")
+            for item in items:
+                chg_color = "chg-green" if item['Change'] >= 0 else "chg-red"
+                sign = "+" if item['Change'] >= 0 else ""
+                tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{item['Symbol']}"
+                st.markdown(f"""
+                <div class="class-card {border_class}">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span class="stock-title">{item['Symbol']}</span>
+                        <span class="stock-price">₹{item['Price']:.2f}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                        <span class="{chg_color}">{sign}{item['Change']:.2f}%</span>
+                        <a href="{tv_link}" target="_blank" class="chart-link">📈 Chart</a>
+                    </div>
+                    <div class="signal-text">Signal: {item['Signal']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    if category_filter == "All":
+        c1, c2, c3 = st.columns(3)
+        with c1: render_category(cats_to_show[0][0], cats_to_show[0][1], cats_to_show[0][2]); render_category(cats_to_show[3][0], cats_to_show[3][1], cats_to_show[3][2])
+        with c2: render_category(cats_to_show[1][0], cats_to_show[1][1], cats_to_show[1][2]); render_category(cats_to_show[4][0], cats_to_show[4][1], cats_to_show[4][2])
+        with c3: render_category(cats_to_show[2][0], cats_to_show[2][1], cats_to_show[2][2]); render_category(cats_to_show[5][0], cats_to_show[5][1], cats_to_show[5][2])
+    else:
+        for cat in cats_to_show: render_category(cat[0], cat[1], cat[2])
