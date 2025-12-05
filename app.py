@@ -1,14 +1,3 @@
-I have switched to a **Custom HTML Table**. This is the **only way** to guarantee that:
-
-1.  **High is strictly above Low** (Stacked vertically, not side-by-side).
-2.  **Headers are perfectly readable** (Dark text on light background).
-3.  **Colors match Excel exactly** (High contrast).
-
-### **Final Fixed Code: `Home.py`**
-
-*Copy and replace your entire file. This version uses HTML rendering to force the layout you want.*
-
-```python
 import streamlit as st
 import pandas as pd
 import requests
@@ -219,4 +208,3 @@ if run_btn:
             st.markdown(html, unsafe_allow_html=True)
         else: st.error("⚠️ Error fetching data.")
 else: st.info("👈 Click RUN")
-```
