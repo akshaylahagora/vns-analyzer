@@ -4,15 +4,27 @@ import requests
 import urllib.parse
 from datetime import datetime, timedelta
 
-# --- PAGE CONFIGURATION ---
+# --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS (THEME SAFE & READABLE) ---
+# --- CUSTOM CSS (VISIBILITY FIX) ---
 st.markdown("""
 <style>
+    /* Force Background to White */
     .stApp { background-color: white; color: black; }
     
-    /* TREND BADGES (The Perfect Header Style) */
+    /* 1. FORCE METRICS TEXT TO BLACK (Fixes visibility issue) */
+    div[data-testid="stMetricValue"] { 
+        color: #000000 !important; 
+        font-size: 1.6rem !important;
+        font-weight: 700 !important;
+    }
+    div[data-testid="stMetricLabel"] { 
+        color: #444444 !important; 
+        font-weight: 600 !important;
+    }
+    
+    /* 2. TREND BADGES */
     .status-bull { 
         background-color: #d1e7dd; color: #0f5132; padding: 10px; border-radius: 8px; 
         font-weight: bold; text-align: center; border: 2px solid #badbcc; font-size: 1.2rem; 
@@ -25,17 +37,18 @@ st.markdown("""
         background-color: #e2e3e5; color: #41464b; padding: 10px; border-radius: 8px; 
         font-weight: bold; text-align: center; border: 2px solid #d3d6d8; font-size: 1.2rem; 
     }
-    
-    /* Metrics Text Size */
-    div[data-testid="stMetricValue"] { font-size: 1.6rem; font-weight: bold; color: #333; }
-    div[data-testid="stMetricLabel"] { font-size: 1rem; color: #555; }
 
-    /* TABLE TEXT SIZE */
+    /* 3. TABLE TEXT SIZE */
     .stDataFrame { font-size: 1.1rem; }
+    
+    /* 4. SIDEBAR INPUTS */
+    .stSelectbox label, .stRadio label, .stDateInput label {
+        color: #333 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- COMPLETE STOCK LIST (180+) ---
+# --- COMPLETE STOCK LIST ---
 STOCK_LIST = [
     "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
     "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
@@ -91,7 +104,7 @@ with st.sidebar:
 @st.cache_data(ttl=300)
 def fetch_data(symbol, start, end):
     try:
-        # FIX: Encode symbol for URL (Handles M&M)
+        # Encode symbol for URL
         safe_symbol = urllib.parse.quote(symbol)
         
         headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
@@ -130,22 +143,22 @@ def analyze_vns(df):
 
         # TREND
         if trend == "Bullish":
-            if c_l < p_l: # Low Broken -> Top
+            if c_l < p_l: 
                 df.at[i-1, 'BU'] = f"BU(T) {d_str} : {p_h}"; df.at[i-1, 'Type']="bull"; last_bu = p_h
-            if c_h > p_h: # High Broken -> Reaction
+            if c_h > p_h: 
                 df.at[i-1, 'BE'] = f"R(Teji) : {p_l}"; df.at[i-1, 'Type']="info"; last_be = p_l
         
         elif trend == "Bearish":
-            if c_h > p_h: # High Broken -> Bottom
+            if c_h > p_h: 
                 df.at[i-1, 'BE'] = f"BE(M) {d_str} : {p_l}"; df.at[i-1, 'Type']="bear"; last_be = p_l
-            if c_l < p_l: # Low Broken -> Reaction
+            if c_l < p_l: 
                 df.at[i-1, 'BU'] = f"R(Mandi) {d_str} : {p_h}"; df.at[i-1, 'Type']="info"; last_bu = p_h
                 
         else: # Neutral
             if c_h > p_h: trend="Bullish"; df.at[i-1, 'BE']=f"Start Teji : {p_l}"; df.at[i-1, 'Type']="bull"; last_be=p_l
             elif c_l < p_l: trend="Bearish"; df.at[i-1, 'BU']=f"Start Mandi : {p_h}"; df.at[i-1, 'Type']="bear"; last_bu=p_h
             
-        # SWITCH (Breakout/Breakdown)
+        # SWITCH
         if trend == "Bearish" and last_bu and c_c > last_bu:
             trend="Bullish"; df.at[i, 'BU']="BREAKOUT (Teji)"; df.at[i, 'Type']="bull"
         if trend == "Bullish" and last_be and c_c < last_be:
@@ -153,7 +166,7 @@ def analyze_vns(df):
             
     return df, trend, last_bu, last_be
 
-# --- RENDER UI ---
+# --- RENDER ---
 st.title(f"📊 VNS Theory: {selected_stock}")
 st.markdown(f"Analysis: **{st.session_state.start_date.strftime('%d-%b-%Y')}** to **{st.session_state.end_date.strftime('%d-%b-%Y')}**")
 
@@ -163,7 +176,7 @@ if run_btn:
         if raw_df is not None:
             df, final_trend, final_res, final_sup = analyze_vns(raw_df)
             
-            # --- THE RESTORED HEADER ---
+            # --- OVERALL TREND HEADER ---
             c1, c2, c3, c4 = st.columns(4)
             with c1:
                 st.markdown("**Overall Trend**")
@@ -180,35 +193,24 @@ if run_btn:
             
             st.divider()
             
-            # --- THE SAFE TABLE (No HTML Errors) ---
+            # --- TABLE ---
+            disp_df = df[['Date', 'CH_OPENING_PRICE', 'CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_CLOSING_PRICE', 'BU', 'BE', 'Type']].copy()
+            disp_df.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'BU (Resist)', 'BE (Support)', 'Type']
             
-            # Stack data using newline
-            df['High_Low'] = df['CH_TRADE_HIGH_PRICE'].astype(str) + "\n" + df['CH_TRADE_LOW_PRICE'].astype(str)
-            df['Open_Close'] = df['CH_OPENING_PRICE'].astype(str) + "\n" + df['CH_CLOSING_PRICE'].astype(str)
-            
-            disp_df = df[['Date', 'High_Low', 'Open_Close', 'BU', 'BE', 'Type']].copy()
-            disp_df.columns = ['Date', 'High / Low', 'Open / Close', 'BU (Resist)', 'BE (Support)', 'Type']
-            
-            # Excel Colors (Light Backgrounds, Dark Text)
             def color_rows(row):
                 s = row['Type']
-                if s == 'bull': return ['background-color: #d1e7dd; color: #0f5132; font-weight: bold; white-space: pre-wrap;'] * len(row)
-                if s == 'bear': return ['background-color: #f8d7da; color: #842029; font-weight: bold; white-space: pre-wrap;'] * len(row)
-                if s == 'warn': return ['background-color: #fff3cd; color: #664d03; font-weight: bold; white-space: pre-wrap;'] * len(row)
-                if s == 'info': return ['background-color: #e2e3e5; color: #41464b; font-style: italic; white-space: pre-wrap;'] * len(row)
+                if s == 'bull': return ['background-color: #C6EFCE; color: #006100; font-weight: bold; white-space: pre-wrap;'] * len(row)
+                if s == 'bear': return ['background-color: #FFC7CE; color: #9C0006; font-weight: bold; white-space: pre-wrap;'] * len(row)
+                if s == 'warn': return ['background-color: #FFEB9C; color: #9C5700; font-weight: bold; white-space: pre-wrap;'] * len(row)
+                if s == 'info': return ['background-color: #E6F3FF; color: #000; font-style: italic; white-space: pre-wrap;'] * len(row)
                 return ['white-space: pre-wrap;'] * len(row)
 
             st.dataframe(
                 disp_df.style.apply(color_rows, axis=1).format({
-                    "Date": lambda t: t.strftime("%d-%b-%Y")
+                    "Date": lambda t: t.strftime("%d-%b-%Y"),
+                    "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}"
                 }),
-                column_config={
-                    "Type": None,
-                    "High / Low": st.column_config.TextColumn("High\nLow"),
-                    "Open / Close": st.column_config.TextColumn("Open\nClose"),
-                    "BU (Resist)": st.column_config.TextColumn("BU (Resist)", width="medium"),
-                    "BE (Support)": st.column_config.TextColumn("BE (Support)", width="medium")
-                },
+                column_config={"Type": None, "BU (Resist)": st.column_config.TextColumn(width="medium"), "BE (Support)": st.column_config.TextColumn(width="medium")},
                 use_container_width=True,
                 height=800
             )
