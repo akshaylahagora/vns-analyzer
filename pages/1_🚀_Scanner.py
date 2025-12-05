@@ -4,62 +4,87 @@ import requests
 import time
 import json
 import os
+import urllib.parse
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pro F&O Scanner", page_icon="🔭", layout="wide")
 
 st.title("🔭 Pro F&O Scanner")
-st.markdown("Automated VNS Scanner • **Daily 6PM Auto-Update**")
+st.markdown("Automated VNS Scanner • **Updates daily after 6:00 PM**")
+
+# --- CUSTOM CSS (VISIBILITY FIX) ---
+st.markdown("""
+<style>
+    /* Force Light Mode */
+    .stApp { background-color: white; color: black; }
+    
+    /* VISIBILITY FIX FOR METRICS */
+    div[data-testid="stMetricValue"] { 
+        color: #000000 !important; 
+    }
+    div[data-testid="stMetricLabel"] { 
+        color: #444444 !important; 
+    }
+    
+    /* Card Container */
+    .stock-card {
+        background-color: #ffffff;
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        margin-bottom: 5px;
+    }
+    .stock-symbol { font-size: 1.1em; font-weight: 800; color: #333; }
+    .stock-price { font-size: 1.0em; font-weight: 600; color: #555; }
+    
+    /* Headers for Columns */
+    .col-header { 
+        padding: 10px; border-radius: 8px; color: white; 
+        font-weight: bold; text-align: center; margin-bottom: 15px; text-transform: uppercase; 
+    }
+    
+    /* Modal/Dialog Styling */
+    div[data-testid="stDialog"] { width: 85vw; } 
+    
+    /* Sidebar text fix */
+    .stSidebar label { color: #333 !important; }
+</style>
+""", unsafe_allow_html=True)
 
 # --- CONFIGURATION ---
 SCAN_FILE = "daily_scan_results.json" 
 
-# Broad list of F&O Stocks
+# COMPLETE F&O STOCK LIST
 FNO_STOCKS = [
-    "RELIANCE", "HDFCBANK", "INFY", "TCS", "KOTAKBANK", "LT", "AXISBANK", "SBIN", 
-    "BAJFINANCE", "TITAN", "ULTRACEMCO", "MARUTI", "ASIANPAINT", "HINDUNILVR", "M&M", 
-    "ADANIENT", "GRASIM", "BAJAJFINSV", "NESTLEIND", "EICHERMOT", "DRREDDY", "DIVISLAB", 
-    "APOLLOHOSP", "BRITANNIA", "TRENT", "HAL", "BEL", "SIEMENS", "INDIGO", "TATASTEEL", 
-    "JIOFIN", "COALINDIA", "HCLTECH", "SUNPHARMA", "ADANIPORTS", "WIPRO", "VEDL", "DLF",
-    "POLYCAB", "HAVELLS", "SRF", "TATAMOTORS", "MRF", "SHREECEM", "BOSCHLTD"
+    "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
+    "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
+    "ASTRAL", "AUROPHARMA", "DMART", "AXISBANK", "BSE", "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", 
+    "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BDL", "BEL", "BHARATFORG", "BHEL", "BPCL", 
+    "BHARTIARTL", "BIOCON", "BLUESTARCO", "BOSCHLTD", "BRITANNIA", "CGPOWER", "CANBK", "CDSL", 
+    "CHOLAFIN", "CIPLA", "COALINDIA", "COFORGE", "COLPAL", "CAMS", "CONCOR", "CROMPTON", 
+    "CUMMINSIND", "CYIENT", "DLF", "DABUR", "DALBHARAT", "DELHIVERY", "DIVISLAB", "DIXON", 
+    "DRREDDY", "EICHERMOT", "EXIDEIND", "NYKAA", "FORTIS", "GAIL", "GMRAIRPORT", "GLENMARK", 
+    "GODREJCP", "GODREJPROP", "GRASIM", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HFCL", 
+    "HAVELLS", "HEROMOTOCO", "HINDALCO", "HAL", "HINDPETRO", "HINDUNILVR", "HINDZINC", "POWERINDIA", 
+    "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB", "IIFL", "ITC", "INDIANB", "IEX", 
+    "IOC", "IRCTC", "IRFC", "IREDA", "INDUSTOWER", "INDUSINDBK", "NAUKRI", "INFY", "INOXWIND", 
+    "INDIGO", "JINDALSTEL", "JSWENERGY", "JSWSTEEL", "JIOFIN", "JUBLFOOD", "KEI", "KPITTECH", 
+    "KALYANKJIL", "KAYNES", "KFINTECH", "KOTAKBANK", "LTF", "LICHSGFIN", "LTIM", "LT", "LAURUSLABS", 
+    "LICI", "LODHA", "LUPIN", "M&M", "MANAPPURAM", "MANKIND", "MARICO", "MARUTI", "MFSL", 
+    "MAXHEALTH", "MAZDOCK", "MPHASIS", "MCX", "MUTHOOTFIN", "NBCC", "NCC", "NHPC", "NMDC", 
+    "NTPC", "NATIONALUM", "NESTLEIND", "NUVAMA", "OBEROIRLTY", "ONGC", "OIL", "PAYTM", "OFSS", 
+    "POLICYBZR", "PGEL", "PIIND", "PNBHOUSING", "PAGEIND", "PATANJALI", "PERSISTENT", "PETRONET", 
+    "PIDILITIND", "PPLPHARMA", "POLYCAB", "PFC", "POWERGRID", "PRESTIGE", "PNB", "RBLBANK", 
+    "RECLTD", "RVNL", "RELIANCE", "SBICARD", "SBILIFE", "SHREECEM", "SRF", "SAMMAANCAP", 
+    "MOTHERSON", "SHRIRAMFIN", "SIEMENS", "SOLARINDS", "SONACOMS", "SBIN", "SAIL", "SUNPHARMA", 
+    "SUPREMEIND", "SUZLON", "SYNGENE", "TATACONSUM", "TITAGARH", "TVSMOTOR", "TCS", "TATAELXSI", 
+    "TATAPOWER", "TATASTEEL", "TATATECH", "TECHM", "FEDERALBNK", "INDHOTEL", "PHOENIXLTD", 
+    "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", "TIINDIA", "UNOMINDA", "UPL", "ULTRACEMCO", 
+    "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "IDEA", "VOLTAS", "WIPRO", "YESBANK", "ZYDUSLIFE"
 ]
-
-# --- MOBILE COMPATIBLE CSS ---
-st.markdown("""
-<style>
-    .stApp { background-color: #f8f9fa; }
-    
-    /* Responsive Card */
-    .stock-card {
-        background-color: white;
-        padding: 12px;
-        border-radius: 10px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        margin-bottom: 8px;
-        box-sizing: border-box; /* Crucial for mobile padding */
-        width: 100%;
-    }
-    .stock-symbol { font-size: 1.1rem; font-weight: 800; color: #333; }
-    .stock-price { font-size: 1.0rem; font-weight: 600; color: #555; }
-    
-    /* Info Row inside Card */
-    .card-info {
-        display: flex; 
-        justify-content: space-between; 
-        font-size: 0.85rem; 
-        color: #666; 
-        margin-top: 8px;
-    }
-    
-    /* Mobile-Friendly Popup */
-    div[data-testid="stDialog"] { width: 95vw !important; max-width: 1000px; } 
-    
-    /* Header Colors */
-    .header-box { padding: 10px; border-radius: 6px; color: white; font-weight: bold; text-align: center; margin-bottom: 12px; }
-</style>
-""", unsafe_allow_html=True)
+FNO_STOCKS = sorted(list(set(FNO_STOCKS)))
 
 # --- SESSION STATE ---
 if 'scan_start_date' not in st.session_state:
@@ -95,12 +120,15 @@ with st.sidebar:
 # --- CORE LOGIC ---
 def fetch_stock_data(symbol, start_date):
     try:
+        # Encode symbol for URL (Handles M&M)
+        safe_symbol = urllib.parse.quote(symbol)
+        
         end = datetime.now()
         req_start = start_date - timedelta(days=5) 
         headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
         session = requests.Session(); session.headers.update(headers)
         session.get("https://www.nseindia.com", timeout=3)
-        url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={req_start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={symbol}&type=priceVolumeDeliverable&series=ALL"
+        url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={req_start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={safe_symbol}&type=priceVolumeDeliverable&series=ALL"
         response = session.get(url, timeout=5)
         if response.status_code == 200:
             df = pd.DataFrame(response.json().get('data', []))
@@ -151,6 +179,7 @@ def run_full_scan():
     progress_bar = st.progress(0)
     status_text = st.empty()
     scan_results = []
+    
     start_date = st.session_state.scan_start_date
     duration_used = st.session_state.scan_duration_label
     
@@ -203,7 +232,6 @@ else:
 def show_details(stock):
     st.subheader(f"{stock['Symbol']} : ₹{stock['Close']:.2f}")
     
-    # Use container width for mobile friendliness
     c1, c2, c3 = st.columns(3)
     c1.metric("Trend", stock['Trend'])
     c2.metric("Resistance", f"{stock['BU']:.2f}" if stock['BU'] else "-")
@@ -225,8 +253,8 @@ def show_details(stock):
             "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}", "BU": "{:.2f}", "BE": "{:.2f}"
         }, na_rep=""),
         column_config={"Type": None}, 
-        use_container_width=True, # Critical for mobile
-        height=400
+        use_container_width=True, 
+        height=500
     )
 
 # --- RENDER UI ---
@@ -245,8 +273,11 @@ if current_data:
     neutral = [r for r in filtered_stocks if r['Trend'] == "Neutral"]
 
     def render_list(stock_list, header_text, header_color):
-        # Header Box
-        st.markdown(f"<div class='header-box' style='background-color:{header_color}'>{header_text} ({len(stock_list)})</div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background-color:{header_color}; padding:8px; border-radius:6px; color:white; font-weight:bold; text-align:center; margin-bottom:10px;">
+            {header_text} ({len(stock_list)})
+        </div>
+        """, unsafe_allow_html=True)
         
         for s in stock_list:
             bu_text = f"{s['BU']:.2f}" if s['BU'] else "-"
@@ -258,19 +289,17 @@ if current_data:
                     <span class="stock-symbol">{s['Symbol']}</span>
                     <span class="stock-price">₹{s['Close']:.2f}</span>
                 </div>
-                <div class="card-info">
+                <div style="font-size:0.85em; color:#666; margin-top:5px; display:flex; justify-content:space-between;">
                     <span>BU: {bu_text}</span>
                     <span>BE: {be_text}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
-            # Full width button for easier tapping on mobile
             if st.button(f"🔍 View {s['Symbol']}", key=f"btn_{s['Symbol']}", use_container_width=True):
                 show_details(s)
 
-    # Columns stack automatically on mobile
     c1, c2, c3 = st.columns(3)
-    with c1: render_list(bulls, "🟢 BULLISH", "#28a745")
-    with c2: render_list(bears, "🔴 BEARISH", "#dc3545")
+    with c1: render_list(bulls, "🟢 BULLISH / TEJI", "#28a745")
+    with c2: render_list(bears, "🔴 BEARISH / MANDI", "#dc3545")
     with c3: render_list(neutral, "⚪ NEUTRAL", "#6c757d")
