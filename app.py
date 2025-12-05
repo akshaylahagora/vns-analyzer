@@ -6,12 +6,22 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS (Clean Up) ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: white; }
-    /* Make the table text larger and readable */
-    .stDataFrame { font-size: 1.1rem; }
+    
+    /* Metrics Styling */
+    div[data-testid="stMetricValue"] { font-size: 1.4rem; font-weight: bold; color: #333; }
+    div[data-testid="stMetricLabel"] { font-size: 0.9rem; color: #666; }
+    
+    /* Trend Badges */
+    .status-bull { background-color: #C6EFCE; color: #006100; padding: 8px 16px; border-radius: 4px; font-weight: bold; text-align: center; border: 1px solid #006100; }
+    .status-bear { background-color: #FFC7CE; color: #9C0006; padding: 8px 16px; border-radius: 4px; font-weight: bold; text-align: center; border: 1px solid #9C0006; }
+    .status-neutral { background-color: #E6F3FF; color: #000; padding: 8px 16px; border-radius: 4px; font-weight: bold; text-align: center; border: 1px solid #000; }
+    
+    /* Table Text Size */
+    .stDataFrame { font-size: 1.05rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -61,12 +71,9 @@ def fetch_data(symbol, start, end):
 
 # --- LOGIC ---
 def analyze_vns(df):
-    df['BU'], df['BE'] = "", ""
-    df['Type'] = "" # Helper for styling
+    df['BU'], df['BE'], df['Type'] = "", "", ""
     trend = "Neutral"
-    
-    last_bu = None
-    last_be = None
+    last_bu, last_be = None, None
     
     for i in range(1, len(df)):
         curr = df.iloc[i]; prev = df.iloc[i-1]
@@ -76,46 +83,34 @@ def analyze_vns(df):
         
         # ATAK
         if last_bu and (last_bu*0.995 <= c_h <= last_bu*1.005) and c_c < last_bu:
-            df.at[i, 'BU'] = f"ATAK (Top) {c_h}"
-            df.at[i, 'Type'] = "warn"
+            df.at[i, 'BU'] = f"ATAK (Top) {c_h}"; df.at[i, 'Type'] = "warn"
         if last_be and (last_be*0.995 <= c_l <= last_be*1.005) and c_c > last_be:
-            df.at[i, 'BE'] = f"ATAK (Bottom) {c_l}"
-            df.at[i, 'Type'] = "warn"
+            df.at[i, 'BE'] = f"ATAK (Bottom) {c_l}"; df.at[i, 'Type'] = "warn"
 
         # TREND
         if trend == "Bullish":
-            if c_l < p_l: # Low Broken
-                df.at[i-1, 'BU'] = f"BU(T) {d_str} : {p_h}"
-                df.at[i-1, 'Type'] = "bull"
-                last_bu = p_h
-            if c_h > p_h: # High Broken
-                df.at[i-1, 'BE'] = f"R(Teji) : {p_l}"
-                df.at[i-1, 'Type'] = "info"
-                last_be = p_l
+            if c_l < p_l: 
+                df.at[i-1, 'BU'] = f"BU(T) {d_str} : {p_h}"; df.at[i-1, 'Type']="bull"; last_bu = p_h
+            if c_h > p_h: 
+                df.at[i-1, 'BE'] = f"R(Teji) : {p_l}"; df.at[i-1, 'Type']="info"; last_be = p_l
         
         elif trend == "Bearish":
-            if c_h > p_h: # High Broken
-                df.at[i-1, 'BE'] = f"BE(M) {d_str} : {p_l}"
-                df.at[i-1, 'Type'] = "bear"
-                last_be = p_l
-            if c_l < p_l: # Low Broken
-                df.at[i-1, 'BU'] = f"R(Mandi) {d_str} : {p_h}"
-                df.at[i-1, 'Type'] = "info"
-                last_bu = p_h
+            if c_h > p_h: 
+                df.at[i-1, 'BE'] = f"BE(M) {d_str} : {p_l}"; df.at[i-1, 'Type']="bear"; last_be = p_l
+            if c_l < p_l: 
+                df.at[i-1, 'BU'] = f"R(Mandi) {d_str} : {p_h}"; df.at[i-1, 'Type']="info"; last_bu = p_h
                 
         else: # Neutral
-            if c_h > p_h: 
-                trend = "Bullish"; df.at[i-1, 'BE'] = f"Start Teji : {p_l}"; df.at[i-1, 'Type']="bull"; last_be = p_l
-            elif c_l < p_l: 
-                trend = "Bearish"; df.at[i-1, 'BU'] = f"Start Mandi : {p_h}"; df.at[i-1, 'Type']="bear"; last_bu = p_h
+            if c_h > p_h: trend="Bullish"; df.at[i-1, 'BE']=f"Start Teji : {p_l}"; df.at[i-1, 'Type']="bull"; last_be=p_l
+            elif c_l < p_l: trend="Bearish"; df.at[i-1, 'BU']=f"Start Mandi : {p_h}"; df.at[i-1, 'Type']="bear"; last_bu=p_h
             
         # SWITCH
         if trend == "Bearish" and last_bu and c_c > last_bu:
-            trend = "Bullish"; df.at[i, 'BU'] = "BREAKOUT (Teji)"; df.at[i, 'Type']="bull"
+            trend="Bullish"; df.at[i, 'BU']="BREAKOUT (Teji)"; df.at[i, 'Type']="bull"
         if trend == "Bullish" and last_be and c_c < last_be:
-            trend = "Bearish"; df.at[i, 'BE'] = "BREAKDOWN (Mandi)"; df.at[i, 'Type']="bear"
+            trend="Bearish"; df.at[i, 'BE']="BREAKDOWN (Mandi)"; df.at[i, 'Type']="bear"
             
-    return df
+    return df, trend, last_bu, last_be
 
 # --- RENDER ---
 st.title(f"📊 VNS Theory: {selected_stock}")
@@ -125,33 +120,44 @@ if run_btn:
     with st.spinner("Fetching..."):
         raw_df = fetch_data(selected_stock, st.session_state.start_date, st.session_state.end_date)
         if raw_df is not None:
-            df = analyze_vns(raw_df)
+            df, final_trend, final_res, final_sup = analyze_vns(raw_df)
             
-            # --- PREPARE CLEAN TABLE ---
+            # --- OVERALL TREND HEADER ---
+            c1, c2, c3, c4 = st.columns(4)
+            
+            with c1:
+                st.caption("Overall Trend")
+                if final_trend == "Bullish":
+                    st.markdown('<div class="status-bull">BULLISH (TEJI)</div>', unsafe_allow_html=True)
+                elif final_trend == "Bearish":
+                    st.markdown('<div class="status-bear">BEARISH (MANDI)</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown('<div class="status-neutral">NEUTRAL</div>', unsafe_allow_html=True)
+            
+            with c2: st.metric("Last Close", f"{df.iloc[-1]['CH_CLOSING_PRICE']:.2f}")
+            with c3: st.metric("Active Resistance", f"{final_res:.2f}" if final_res else "-")
+            with c4: st.metric("Active Support", f"{final_sup:.2f}" if final_sup else "-")
+            
+            st.divider()
+            
+            # --- TABLE ---
             disp_df = df[['Date', 'CH_OPENING_PRICE', 'CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_CLOSING_PRICE', 'BU', 'BE', 'Type']].copy()
             disp_df.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'BU (Resist)', 'BE (Support)', 'Type']
             
-            # --- COLOR STYLING (The Safe Way) ---
             def color_rows(row):
                 s = row['Type']
-                # High Contrast Excel Colors
                 if s == 'bull': return ['background-color: #C6EFCE; color: #006100; font-weight: bold'] * len(row)
                 if s == 'bear': return ['background-color: #FFC7CE; color: #9C0006; font-weight: bold'] * len(row)
                 if s == 'warn': return ['background-color: #FFEB9C; color: #9C5700; font-weight: bold'] * len(row)
                 if s == 'info': return ['background-color: #E6F3FF; color: #000; font-style: italic'] * len(row)
                 return [''] * len(row)
 
-            # RENDER
             st.dataframe(
                 disp_df.style.apply(color_rows, axis=1).format({
                     "Date": lambda t: t.strftime("%d-%b-%Y"),
                     "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}"
                 }),
-                column_config={
-                    "Type": None, # Hide the helper column
-                    "BU (Resist)": st.column_config.TextColumn(width="medium"),
-                    "BE (Support)": st.column_config.TextColumn(width="medium")
-                },
+                column_config={"Type": None, "BU (Resist)": st.column_config.TextColumn(width="medium"), "BE (Support)": st.column_config.TextColumn(width="medium")},
                 use_container_width=True,
                 height=800
             )
