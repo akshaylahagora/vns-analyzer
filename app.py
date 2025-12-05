@@ -3,66 +3,23 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 
-# --- PAGE CONFIGURATION ---
+# --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS (EXCEL STYLING) ---
+# --- CUSTOM CSS (Only for Font & Spacing) ---
 st.markdown("""
 <style>
-    /* Global Clean */
-    .stApp { background-color: #ffffff; color: #000; }
-    
-    /* VNS Table Styling */
-    .vns-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-family: 'Arial', sans-serif;
-        font-size: 14px;
-        margin-top: 20px;
-    }
-    
-    .vns-table th {
-        background-color: #4472C4; /* Excel Blue Header */
-        color: white;
-        padding: 12px;
-        text-align: center;
-        border: 1px solid #8EA9DB;
-    }
-    
-    .vns-table td {
-        padding: 8px;
-        text-align: center;
-        border: 1px solid #d0d7e5;
-        vertical-align: middle;
-        line-height: 1.4;
-    }
-    
-    /* Value Stacking */
-    .val-top { font-weight: bold; color: #000; font-size: 1.1em; display: block; }
-    .val-bot { color: #555; font-size: 0.95em; display: block; margin-top: 3px; }
-    .lbl { font-size: 0.75em; color: #999; font-weight: normal; }
-
-    /* --- EXCEL CONDITIONAL FORMATTING COLORS --- */
-    
-    /* TEJI (Good/Bullish) - Light Green BG, Dark Green Text */
-    .c-bull { background-color: #C6EFCE; color: #006100; font-weight: bold; }
-    
-    /* MANDI (Bad/Bearish) - Light Red BG, Dark Red Text */
-    .c-bear { background-color: #FFC7CE; color: #9C0006; font-weight: bold; }
-    
-    /* REACTION/NEUTRAL - Light Blue BG, Dark Blue Text */
-    .c-info { background-color: #DDEBF7; color: #1F4E78; font-style: italic; }
-    
-    /* ATAK/WARNING - Light Yellow BG, Dark Yellow Text */
-    .c-warn { background-color: #FFEB9C; color: #9C5700; font-weight: bold; }
-
+    .stApp { background-color: white; }
+    /* Force rows to be taller for stacked text */
+    .stDataFrame td { vertical-align: middle !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- CONFIGURATION ---
+# --- CONFIG ---
 STOCK_LIST = ["RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "ITC", "SBIN", "BHARTIARTL", "L&T", "AXISBANK", "KOTAKBANK", "HINDUNILVR", "TATAMOTORS", "MARUTI", "HCLTECH", "SUNPHARMA", "TITAN", "BAJFINANCE", "ULTRACEMCO", "ASIANPAINT", "NTPC", "POWERGRID", "M&M", "ADANIENT", "ADANIPORTS", "COALINDIA", "WIPRO", "BAJAJFINSV", "NESTLEIND", "JSWSTEEL", "GRASIM", "ONGC", "TATASTEEL", "HDFCLIFE", "SBILIFE", "DRREDDY", "EICHERMOT", "CIPLA", "DIVISLAB", "BPCL", "HINDALCO", "HEROMOTOCO", "APOLLOHOSP", "TATACONSUM", "BRITANNIA", "UPL", "ZOMATO", "PAYTM", "DLF", "INDIGO", "HAL", "BEL", "VBL", "TRENT", "JIOFIN", "ADANIPOWER", "IRFC", "PFC", "RECLTD", "BHEL"]
 STOCK_LIST.sort()
 
+# --- STATE ---
 if 'start_date' not in st.session_state: st.session_state.start_date = datetime.now() - timedelta(days=60)
 if 'end_date' not in st.session_state: st.session_state.end_date = datetime.now()
 
@@ -84,7 +41,7 @@ with st.sidebar:
     st.divider()
     run_btn = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
-# --- LOGIC ---
+# --- DATA ---
 @st.cache_data(ttl=300)
 def fetch_data(symbol, start, end):
     try:
@@ -102,73 +59,53 @@ def fetch_data(symbol, start, end):
     except: return None
     return None
 
+# --- LOGIC ---
 def analyze_vns(df):
-    # Initialize empty columns for CSS classes and Text
-    df['BU_Txt'], df['BE_Txt'] = "", ""
-    df['BU_Css'], df['BE_Css'] = "", ""
-    
+    df['BU'], df['BE'] = "", ""
     trend = "Neutral"
     
-    # We use index loop to look back
+    last_bu = None
+    last_be = None
+    
     for i in range(1, len(df)):
-        curr = df.iloc[i]
-        prev = df.iloc[i-1]
+        curr = df.iloc[i]; prev = df.iloc[i-1]
+        c_h, c_l, c_c = curr['CH_TRADE_HIGH_PRICE'], curr['CH_TRADE_LOW_PRICE'], curr['CH_CLOSING_PRICE']
+        p_h, p_l = prev['CH_TRADE_HIGH_PRICE'], prev['CH_TRADE_LOW_PRICE']
+        d_str = prev['Date'].strftime('%d-%b').upper()
         
-        c_high, c_low, c_close = curr['CH_TRADE_HIGH_PRICE'], curr['CH_TRADE_LOW_PRICE'], curr['CH_CLOSING_PRICE']
-        p_high, p_low = prev['CH_TRADE_HIGH_PRICE'], prev['CH_TRADE_LOW_PRICE']
-        
-        # Format date for the label (e.g., 6-NOV)
-        d_lbl = prev['Date'].strftime('%-d-%b').upper()
-        
-        low_broken = c_low < p_low
-        high_broken = c_high > p_high
-        
-        # --- STATE MACHINE ---
+        # ATAK
+        if last_bu and (last_bu*0.995 <= c_h <= last_bu*1.005) and c_c < last_bu:
+            df.at[i, 'BU'] = f"ATAK (Top)\n{c_h}"
+        if last_be and (last_be*0.995 <= c_l <= last_be*1.005) and c_c > last_be:
+            df.at[i, 'BE'] = f"ATAK (Bottom)\n{c_l}"
+
+        # TREND
         if trend == "Bullish":
-            # 1. Low Broken -> Top (BU)
-            if low_broken:
-                df.at[i-1, 'BU_Txt'] = f"BU(T) {d_lbl}<br>{p_high}"
-                df.at[i-1, 'BU_Css'] = "c-bull"
-            
-            # 2. High Broken -> Reaction (BE)
-            if high_broken:
-                df.at[i-1, 'BE_Txt'] = f"R(Teji)<br>{p_low}"
-                df.at[i-1, 'BE_Css'] = "c-info"
-
+            if c_l < p_l: # Low Broken
+                df.at[i-1, 'BU'] = f"BU(T) {d_str}\n{p_h}"
+                last_bu = p_h
+            if c_h > p_h: # High Broken
+                df.at[i-1, 'BE'] = f"R(Teji)\n{p_l}"
+                last_be = p_l
+        
         elif trend == "Bearish":
-            # 1. High Broken -> Bottom (BE)
-            if high_broken:
-                df.at[i-1, 'BE_Txt'] = f"BE(M) {d_lbl}<br>{p_low}"
-                df.at[i-1, 'BE_Css'] = "c-bear"
+            if c_h > p_h: # High Broken
+                df.at[i-1, 'BE'] = f"BE(M) {d_str}\n{p_l}"
+                last_be = p_l
+            if c_l < p_l: # Low Broken
+                df.at[i-1, 'BU'] = f"R(Mandi) {d_str}\n{p_h}"
+                last_bu = p_h
                 
-            # 2. Low Broken -> Reaction (BU)
-            if low_broken:
-                df.at[i-1, 'BU_Txt'] = f"R(Mandi) {d_lbl}<br>{p_high}"
-                df.at[i-1, 'BU_Css'] = "c-info"
-
         else: # Neutral
-            if high_broken:
-                trend = "Bullish"
-                df.at[i-1, 'BE_Txt'] = f"Start Teji<br>{p_low}"
-                df.at[i-1, 'BE_Css'] = "c-bull"
-            elif low_broken:
-                trend = "Bearish"
-                df.at[i-1, 'BU_Txt'] = f"Start Mandi<br>{p_high}"
-                df.at[i-1, 'BU_Css'] = "c-bear"
-                
-        # --- SWITCH CHECK ---
-        # If we marked a BU in Bearish mode, and break it -> Switch
-        if trend == "Bearish" and df.at[i-1, 'BU_Txt'] and c_close > p_high:
-            trend = "Bullish"
-            df.at[i, 'BU_Txt'] = "BREAKOUT<br>(Teji)"
-            df.at[i, 'BU_Css'] = "c-bull"
+            if c_h > p_h: trend = "Bullish"; df.at[i-1, 'BE'] = f"Start Teji\n{p_l}"; last_be = p_l
+            elif c_l < p_l: trend = "Bearish"; df.at[i-1, 'BU'] = f"Start Mandi\n{p_h}"; last_bu = p_h
             
-        # If we marked a BE in Bullish mode, and break it -> Switch
-        if trend == "Bullish" and df.at[i-1, 'BE_Txt'] and c_close < p_low:
-            trend = "Bearish"
-            df.at[i, 'BE_Txt'] = "BREAKDOWN<br>(Mandi)"
-            df.at[i, 'BE_Css'] = "c-bear"
-
+        # SWITCH
+        if trend == "Bearish" and last_bu and c_c > last_bu:
+            trend = "Bullish"; df.at[i, 'BU'] = "BREAKOUT (Teji)"
+        if trend == "Bullish" and last_be and c_c < last_be:
+            trend = "Bearish"; df.at[i, 'BE'] = "BREAKDOWN (Mandi)"
+            
     return df
 
 # --- RENDER ---
@@ -181,45 +118,53 @@ if run_btn:
         if raw_df is not None:
             df = analyze_vns(raw_df)
             
-            # BUILD HTML STRING MANUALLY TO ENSURE FORMATTING
-            html_rows = ""
-            for _, r in df.iterrows():
-                d = r['Date'].strftime('%d-%b-%Y')
+            # --- STACKED COLUMNS ---
+            df['High_Low'] = df['CH_TRADE_HIGH_PRICE'].astype(str) + "\n" + df['CH_TRADE_LOW_PRICE'].astype(str)
+            df['Open_Close'] = df['CH_OPENING_PRICE'].astype(str) + "\n" + df['CH_CLOSING_PRICE'].astype(str)
+            
+            # Filter Columns
+            disp_df = df[['Date', 'High_Low', 'Open_Close', 'BU', 'BE']].copy()
+            disp_df['Date'] = disp_df['Date'].dt.strftime('%d-%b-%Y')
+            
+            # --- COLOR STYLING (Pandas Styler - Safe & Clean) ---
+            def color_cells(row):
+                styles = [''] * len(row)
                 
-                # Stacked Numbers
-                hl = f"<span class='val-top'>{r['CH_TRADE_HIGH_PRICE']:.2f}</span><span class='val-bot'>{r['CH_TRADE_LOW_PRICE']:.2f}</span>"
-                oc = f"<span class='val-top'>{r['CH_OPENING_PRICE']:.2f}</span><span class='val-bot'>{r['CH_CLOSING_PRICE']:.2f}</span>"
+                # Excel Colors
+                c_bull = 'background-color: #C6EFCE; color: #006100; font-weight: bold; white-space: pre-wrap;' # Light Green
+                c_bear = 'background-color: #FFC7CE; color: #9C0006; font-weight: bold; white-space: pre-wrap;' # Light Red
+                c_atak = 'background-color: #FFEB9C; color: #9C5700; font-weight: bold; white-space: pre-wrap;' # Light Yellow
+                c_info = 'background-color: #E6F3FF; color: #000; font-style: italic; white-space: pre-wrap;' # Light Blue
                 
-                html_rows += f"""
-                <tr>
-                    <td>{d}</td>
-                    <td>{hl}</td>
-                    <td>{oc}</td>
-                    <td class="{r['BU_Css']}">{r['BU_Txt']}</td>
-                    <td class="{r['BE_Css']}">{r['BE_Txt']}</td>
-                </tr>
-                """
-            
-            # FINAL TABLE HTML
-            final_html = f"""
-            <table class="vns-table">
-                <thead>
-                    <tr>
-                        <th style="width:15%">Date</th>
-                        <th style="width:20%">High<br><span class="lbl">Low</span></th>
-                        <th style="width:20%">Open<br><span class="lbl">Close</span></th>
-                        <th style="width:22%">BU (Resistance)</th>
-                        <th style="width:22%">BE (Support)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {html_rows}
-                </tbody>
-            </table>
-            """
-            
-            # RENDER
-            st.markdown(final_html, unsafe_allow_html=True)
-            
+                # BU Column (Index 3)
+                txt_bu = str(row['BU'])
+                if "BU(T)" in txt_bu or "BREAKOUT" in txt_bu: styles[3] = c_bull
+                elif "R(" in txt_bu: styles[3] = c_info
+                elif "ATAK" in txt_bu: styles[3] = c_atak
+                elif "Mandi" in txt_bu: styles[3] = c_bear
+                
+                # BE Column (Index 4)
+                txt_be = str(row['BE'])
+                if "BE(M)" in txt_be or "BREAKDOWN" in txt_be: styles[4] = c_bear
+                elif "R(" in txt_be: styles[4] = c_info
+                elif "ATAK" in txt_be: styles[4] = c_atak
+                elif "Teji" in txt_be: styles[4] = c_bull
+                
+                return styles
+
+            # RENDER TABLE
+            st.dataframe(
+                disp_df.style.apply(color_cells, axis=1),
+                use_container_width=True,
+                height=800,
+                column_config={
+                    "Date": st.column_config.TextColumn("Date", width="small"),
+                    "High_Low": st.column_config.TextColumn("High\nLow", width="small"),
+                    "Open_Close": st.column_config.TextColumn("Open\nClose", width="small"),
+                    "BU": st.column_config.TextColumn("BU (Resist)", width="medium"),
+                    "BE": st.column_config.TextColumn("BE (Support)", width="medium"),
+                },
+                hide_index=True
+            )
         else: st.error("⚠️ Data Error")
 else: st.info("👈 Click RUN")
