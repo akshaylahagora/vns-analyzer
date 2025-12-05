@@ -11,32 +11,56 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS FOR EXCEL LOOK ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: #ffffff; }
     
-    /* Global Font Tweak */
+    /* Global Font */
     html, body, [class*="css"] {
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-family: 'Segoe UI', Arial, sans-serif;
     }
 
-    /* Metric Styling */
-    div[data-testid="stMetricValue"] { 
-        font-size: 1.6rem; font-weight: 700; color: #2c3e50;
-    }
-    
-    /* Radio Button Tabs */
+    /* Tabs */
     div[role="radiogroup"] { flex-wrap: wrap; gap: 5px; }
     div[role="radiogroup"] label { 
-        border: 1px solid #e0e0e0; 
-        padding: 5px 15px; 
-        border-radius: 5px; 
+        border: 1px solid #ddd; 
         background: #f8f9fa;
+        padding: 5px 15px;
+        border-radius: 4px;
+    }
+
+    /* TABLE STYLING (The Excel Look) */
+    .vns-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        border: 1px solid #ccc;
+    }
+    .vns-table th {
+        background-color: #2c3e50;
+        color: white;
+        padding: 10px;
+        text-align: center;
+        border: 1px solid #ccc;
+    }
+    .vns-table td {
+        padding: 8px;
+        border: 1px solid #ccc;
+        text-align: center;
+        vertical-align: middle;
     }
     
-    /* DataFrame specific tweaks to ensure height */
-    div[data-testid="stDataFrame"] { width: 100%; }
+    /* Number Stacking */
+    .top-val { font-weight: bold; color: #000; font-size: 1.1em; }
+    .bot-val { color: #555; font-size: 0.9em; margin-top: 2px; }
+    
+    /* VNS Colors (Excel Standard) */
+    .bg-bull { background-color: #C6EFCE; color: #006100; font-weight: bold; } /* Green */
+    .bg-bear { background-color: #FFC7CE; color: #9C0006; font-weight: bold; } /* Red */
+    .bg-atak { background-color: #FFEB9C; color: #9C6500; font-weight: bold; } /* Yellow */
+    .bg-info { background-color: #BDD7EE; color: #000000; font-style: italic; } /* Blue */
+    
 </style>
 """, unsafe_allow_html=True)
 
@@ -106,11 +130,14 @@ def fetch_nse_data(symbol, start, end):
 
 # --- VNS LOGIC ---
 def analyze_vns(df):
-    df['BU'] = ""
-    df['BE'] = ""
-    trend = "Neutral"
+    df['BU_Class'] = "" # To store CSS class for color
+    df['BE_Class'] = ""
+    df['BU_Text'] = ""  # To store Display Text
+    df['BE_Text'] = ""
     
-    last_bu_level, last_be_level = None, None
+    trend = "Neutral"
+    last_bu_level = None
+    last_be_level = None
     
     for i in range(1, len(df)):
         curr_row = df.iloc[i]
@@ -118,49 +145,61 @@ def analyze_vns(df):
         
         curr_high, curr_low = curr_row['CH_TRADE_HIGH_PRICE'], curr_row['CH_TRADE_LOW_PRICE']
         prev_high, prev_low = prev_row['CH_TRADE_HIGH_PRICE'], prev_row['CH_TRADE_LOW_PRICE']
+        curr_close = curr_row['CH_CLOSING_PRICE']
         
         low_broken = curr_low < prev_low
         high_broken = curr_high > prev_high
-        date_str = prev_row['Date'].strftime('%-d-%b').upper()
+        date_str = prev_row['Date'].strftime('%d-%b').upper()
         
         # 1. ATAK CHECK
-        if last_bu_level and (last_bu_level * 0.995 <= curr_high <= last_bu_level * 1.005) and curr_row['CH_CLOSING_PRICE'] < last_bu_level:
-            df.at[i, 'BU'] = f"ATAK (Top)\n{curr_high}"
-        if last_be_level and (last_be_level * 0.995 <= curr_low <= last_be_level * 1.005) and curr_row['CH_CLOSING_PRICE'] > last_be_level:
-            df.at[i, 'BE'] = f"ATAK (Bottom)\n{curr_low}"
+        if last_bu_level and (last_bu_level * 0.995 <= curr_high <= last_bu_level * 1.005) and curr_close < last_bu_level:
+            df.at[i, 'BU_Text'] = f"ATAK (Top)\n{curr_high}"
+            df.at[i, 'BU_Class'] = "bg-atak"
+            
+        if last_be_level and (last_be_level * 0.995 <= curr_low <= last_be_level * 1.005) and curr_close > last_be_level:
+            df.at[i, 'BE_Text'] = f"ATAK (Bottom)\n{curr_low}"
+            df.at[i, 'BE_Class'] = "bg-atak"
 
         # 2. TREND LOGIC
         if trend == "Bullish":
             if low_broken: 
-                df.at[i-1, 'BU'] = f"BU(T) {date_str}\n{prev_high}"
+                df.at[i-1, 'BU_Text'] = f"BU(T) {date_str}<br>{prev_high}"
+                df.at[i-1, 'BU_Class'] = "bg-bull"
                 last_bu_level = prev_high 
             if high_broken: 
-                df.at[i-1, 'BE'] = f"R(Teji)\n{prev_low}"
+                df.at[i-1, 'BE_Text'] = f"R(Teji)<br>{prev_low}"
+                df.at[i-1, 'BE_Class'] = "bg-info"
                 last_be_level = prev_low 
 
         elif trend == "Bearish":
             if high_broken: 
-                df.at[i-1, 'BE'] = f"BE(M) {date_str}\n{prev_low}"
+                df.at[i-1, 'BE_Text'] = f"BE(M) {date_str}<br>{prev_low}"
+                df.at[i-1, 'BE_Class'] = "bg-bear"
                 last_be_level = prev_low 
             if low_broken: 
-                df.at[i-1, 'BU'] = f"R(Mandi) {date_str}\n{prev_high}"
+                df.at[i-1, 'BU_Text'] = f"R(Mandi) {date_str}<br>{prev_high}"
+                df.at[i-1, 'BU_Class'] = "bg-info"
                 last_bu_level = prev_high 
 
         else: # Neutral
             if high_broken:
                 trend = "Bullish"
-                df.at[i-1, 'BE'] = f"Start Teji\n{prev_low}"
+                df.at[i-1, 'BE_Text'] = f"Start Teji<br>{prev_low}"
+                df.at[i-1, 'BE_Class'] = "bg-bull"
             elif low_broken:
                 trend = "Bearish"
-                df.at[i-1, 'BU'] = f"Start Mandi\n{prev_high}"
+                df.at[i-1, 'BU_Text'] = f"Start Mandi<br>{prev_high}"
+                df.at[i-1, 'BU_Class'] = "bg-bear"
         
         # 3. SWITCHING
-        if trend == "Bearish" and last_bu_level and curr_row['CH_CLOSING_PRICE'] > last_bu_level:
+        if trend == "Bearish" and last_bu_level and curr_close > last_bu_level:
              trend = "Bullish"
-             df.at[i, 'BU'] = "BREAKOUT (Teji)"
-        if trend == "Bullish" and last_be_level and curr_row['CH_CLOSING_PRICE'] < last_be_level:
+             df.at[i, 'BU_Text'] = "BREAKOUT (Teji)"
+             df.at[i, 'BU_Class'] = "bg-bull"
+        if trend == "Bullish" and last_be_level and curr_close < last_be_level:
              trend = "Bearish"
-             df.at[i, 'BE'] = "BREAKDOWN (Mandi)"
+             df.at[i, 'BE_Text'] = "BREAKDOWN (Mandi)"
+             df.at[i, 'BE_Class'] = "bg-bear"
         
     return df
 
@@ -174,61 +213,50 @@ if run_btn:
         if raw_df is not None:
             analyzed_df = analyze_vns(raw_df)
             
-            # --- CREATE STACKED COLUMNS ---
-            # Using HTML break <br/> won't work in pure Streamlit DataFrame unless we use a specific column config,
-            # but standard \n works with white-space: pre-wrap style.
+            # --- GENERATE HTML TABLE (For Perfect Styling) ---
+            html = """
+            <table class="vns-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>High<br>Low</th>
+                        <th>Open<br>Close</th>
+                        <th>BU (Resistance)</th>
+                        <th>BE (Support)</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
             
-            analyzed_df['HIGH_LOW'] = analyzed_df['CH_TRADE_HIGH_PRICE'].astype(str) + "\n" + analyzed_df['CH_TRADE_LOW_PRICE'].astype(str)
-            analyzed_df['OPEN_CLOSE'] = analyzed_df['CH_OPENING_PRICE'].astype(str) + "\n" + analyzed_df['CH_CLOSING_PRICE'].astype(str)
+            for index, row in analyzed_df.iterrows():
+                date_str = row['Date'].strftime('%d-%b-%Y')
+                
+                # Stacked Values
+                hl_cell = f"<div class='top-val'>{row['CH_TRADE_HIGH_PRICE']:.2f}</div><div class='bot-val'>{row['CH_TRADE_LOW_PRICE']:.2f}</div>"
+                oc_cell = f"<div class='top-val'>{row['CH_OPENING_PRICE']:.2f}</div><div class='bot-val'>{row['CH_CLOSING_PRICE']:.2f}</div>"
+                
+                # BU Cell
+                bu_class = row['BU_Class']
+                bu_text = row['BU_Text'] if row['BU_Text'] else ""
+                
+                # BE Cell
+                be_class = row['BE_Class']
+                be_text = row['BE_Text'] if row['BE_Text'] else ""
+                
+                html += f"""
+                <tr>
+                    <td>{date_str}</td>
+                    <td>{hl_cell}</td>
+                    <td>{oc_cell}</td>
+                    <td class="{bu_class}">{bu_text}</td>
+                    <td class="{be_class}">{be_text}</td>
+                </tr>
+                """
+                
+            html += "</tbody></table>"
             
-            display_df = analyzed_df[['Date', 'HIGH_LOW', 'OPEN_CLOSE', 'BU', 'BE']].copy()
-            # Renaming columns to be cleaner
-            display_df.columns = ['Date', 'High / Low', 'Open / Close', 'BU (Resist)', 'BE (Support)']
+            # Render HTML
+            st.markdown(html, unsafe_allow_html=True)
             
-            # --- COLOR STYLING FUNCTION ---
-            def style_excel(row):
-                # Base Style: Centered, Middle Align, Border
-                base = 'text-align: center; vertical-align: middle; white-space: pre-wrap; border-bottom: 1px solid #f0f0f0;'
-                
-                styles = [base] * len(row)
-                
-                # Colors
-                c_bull = base + 'background-color: #d1e7dd; color: #0f5132; font-weight: bold;' 
-                c_bear = base + 'background-color: #f8d7da; color: #842029; font-weight: bold;' 
-                c_atak = base + 'background-color: #fff3cd; color: #664d03; font-weight: bold;' 
-                c_info = base + 'background-color: #e2e3e5; color: #41464b; font-style: italic;' 
-                
-                # BU Column (Index 3)
-                bu_txt = str(row['BU (Resist)'])
-                if "BU(T)" in bu_txt or "BREAKOUT" in bu_txt: styles[3] = c_bull
-                elif "R(" in bu_txt: styles[3] = c_info
-                elif "ATAK" in bu_txt: styles[3] = c_atak
-                elif "Mandi" in bu_txt: styles[3] = c_bear
-                
-                # BE Column (Index 4)
-                be_txt = str(row['BE (Support)'])
-                if "BE(M)" in be_txt or "BREAKDOWN" in be_txt: styles[4] = c_bear
-                elif "R(" in be_txt: styles[4] = c_info
-                elif "ATAK" in be_txt: styles[4] = c_atak
-                elif "Teji" in be_txt: styles[4] = c_bull
-                
-                return styles
-
-            # Render Table
-            st.dataframe(
-                display_df.style.apply(style_excel, axis=1).format({
-                    "Date": lambda t: t.strftime("%d-%b-%Y")
-                }),
-                use_container_width=True,
-                height=800,
-                # Column Config for better widths
-                column_config={
-                    "Date": st.column_config.DateColumn("Date", format="DD-MMM-YYYY", width="small"),
-                    "High / Low": st.column_config.TextColumn("High\nLow", width="small"),
-                    "Open / Close": st.column_config.TextColumn("Open\nClose", width="small"),
-                    "BU (Resist)": st.column_config.TextColumn("BU (Higher)", width="medium"),
-                    "BE (Support)": st.column_config.TextColumn("BE (Lower)", width="medium")
-                }
-            )
         else: st.error("⚠️ Could not fetch data.")
 else: st.info("👈 Select options and click RUN.")
