@@ -7,15 +7,12 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS (Cleaned for Light Theme) ---
 st.markdown("""
 <style>
-    /* Force Light Mode */
-    .stApp { background-color: white; color: black; }
-    
-    /* CUSTOM METRIC CARDS (Matches Scanner Page) */
+    /* Metric Cards */
     .metric-card {
-        background-color: #f8f9fa;
+        background-color: #ffffff;
         border: 1px solid #e0e0e0;
         border-radius: 8px;
         padding: 15px;
@@ -35,7 +32,7 @@ st.markdown("""
         color: #000; 
     }
 
-    /* TREND BADGES */
+    /* Trend Badges */
     .trend-card {
         padding: 15px;
         border-radius: 8px;
@@ -48,15 +45,12 @@ st.markdown("""
     .trend-bear { background-color: #f8d7da; color: #842029; border-color: #f5c2c7; }
     .trend-neutral { background-color: #e2e3e5; color: #41464b; border-color: #d3d6d8; }
 
-    /* TABLE TEXT SIZE */
+    /* Table Text */
     .stDataFrame { font-size: 1.1rem; }
-    
-    /* SIDEBAR TEXT */
-    .stSidebar label { color: #333 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- COMPLETE STOCK LIST (180+) ---
+# --- STOCK LIST ---
 STOCK_LIST = [
     "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
     "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
@@ -180,15 +174,13 @@ if run_btn:
         if raw_df is not None:
             df, final_trend, final_res, final_sup = analyze_vns(raw_df)
             
-            # --- CUSTOM HEADER CARDS ---
+            # --- HEADER CARDS ---
             c1, c2, c3, c4 = st.columns(4)
             
-            # Helper to create HTML cards
             def card(label, value):
                 return f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>"""
             
             with c1:
-                # Trend Card with specific styling
                 css_cls, text = "trend-neutral", "NEUTRAL"
                 if final_trend == "Bullish": css_cls, text = "trend-bull", "BULLISH (TEJI)"
                 elif final_trend == "Bearish": css_cls, text = "trend-bear", "BEARISH (MANDI)"
