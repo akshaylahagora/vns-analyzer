@@ -24,6 +24,18 @@ st.markdown("""
         color: #000000 !important;
     }
     
+    /* MODAL METRIC CARDS */
+    .metric-card {
+        background-color: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 10px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .metric-label { font-size: 0.8rem; font-weight: 600; color: #666; text-transform: uppercase; margin-bottom: 4px; }
+    .metric-value { font-size: 1.2rem; font-weight: 800; color: #000; }
+    
     /* CARD DESIGN */
     .class-card {
         background-color: #ffffff;
@@ -62,18 +74,6 @@ st.markdown("""
         text-decoration: none; font-size: 0.8rem; color: #0984e3 !important; font-weight: bold; float: right;
     }
     .chart-link:hover { text-decoration: underline; }
-    
-    /* MODAL METRIC CARDS */
-    .metric-card {
-        background-color: #f8f9fa;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 10px;
-        text-align: center;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .metric-label { font-size: 0.8rem; font-weight: 600; color: #666; text-transform: uppercase; margin-bottom: 4px; }
-    .metric-value { font-size: 1.2rem; font-weight: 800; color: #000; }
     
     /* Sidebar text fix */
     .stSidebar label { color: #333 !important; }
@@ -133,7 +133,6 @@ def update_class_settings():
     elif selection == "3M": st.session_state.class_start_date = now - timedelta(days=90)
     elif selection == "6M": st.session_state.class_start_date = now - timedelta(days=180)
     elif selection == "1Y": st.session_state.class_start_date = now - timedelta(days=365)
-    # Custom handled in widget
 
 # --- SIDEBAR CONTROLS ---
 with st.sidebar:
@@ -142,7 +141,6 @@ with st.sidebar:
     # 1. Period (Affects Scan Data)
     st.subheader("1. Analysis Period")
     
-    # Added "2M" and "Custom"
     period_sel = st.radio(
         "Duration", 
         ["1M", "2M", "3M", "6M", "1Y", "Custom"], 
@@ -158,7 +156,6 @@ with st.sidebar:
         if len(c_dates) == 2:
             st.session_state.class_start_date = datetime.combine(c_dates[0], datetime.min.time())
             st.session_state.custom_date_range = c_dates
-            # End date handled in fetcher (usually Now)
     
     st.divider()
     
@@ -168,7 +165,7 @@ with st.sidebar:
     view_min = c1.number_input("Min Price", 0, value=1000, step=100) # Default 1000
     view_max = c2.number_input("Max Price", 0, value=100000, step=500)
     
-    category_filter = st.selectbox("Show Category", ["All", "Bullish Only", "Bearish Only", "Atak (Reversals) Only", "High Momentum Only"])
+    category_filter = st.selectbox("Category", ["All", "Bullish Only", "Bearish Only", "Atak Only", "High Momentum Only"])
     
     st.divider()
     force_scan = st.button("🔄 Force Refresh", type="primary", use_container_width=True)
@@ -178,7 +175,6 @@ def fetch_stock_data(symbol, start_date):
     try:
         safe_symbol = urllib.parse.quote(symbol)
         end = datetime.now()
-        # Buffer for calculations
         req_start = start_date - timedelta(days=5)
         
         headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
@@ -202,7 +198,6 @@ def fetch_stock_data(symbol, start_date):
 def classify_stock(df):
     trend = "Neutral"; last_bu = None; last_be = None; signal_desc = "Neutral"; category = "Neutral"
     
-    # Store history for Popup
     history_records = []
     
     for i in range(1, len(df)):
@@ -233,11 +228,10 @@ def classify_stock(df):
             elif low_broken: trend="Bearish"; last_bu=p_h; current_signal="Start Bear"; bu_val=p_h; signal_type="bear"
             
         if trend == "Bearish" and last_bu and c_c > last_bu:
-            trend = "Bullish"; current_signal = "BREAKOUT (Teji)"; bu_val=None; signal_type="bull"
+            trend = "Bullish"; current_signal = "BREAKOUT (Fresh Teji)"; bu_val=None; signal_type="bull"
         if trend == "Bullish" and last_be and c_c < last_be:
-            trend = "Bearish"; current_signal = "BREAKDOWN (Mandi)"; be_val=None; signal_type="bear"
+            trend = "Bearish"; current_signal = "BREAKDOWN (Fresh Mandi)"; be_val=None; signal_type="bear"
             
-        # Record for History (JSON Serializable)
         history_records.append({
             'Date': row['Date'].strftime('%d-%b-%Y'),
             'Open': row['CH_OPENING_PRICE'], 'High': row['CH_TRADE_HIGH_PRICE'],
@@ -257,7 +251,6 @@ def classify_stock(df):
     last_row = df.iloc[-1]
     pct_change = ((last_row['CH_CLOSING_PRICE'] - last_row['CH_PREVIOUS_CLS_PRICE']) / last_row['CH_PREVIOUS_CLS_PRICE']) * 100
     
-    # Return Last Known Levels for Header
     return category, signal_desc, last_row['CH_CLOSING_PRICE'], pct_change, history_records, last_bu, last_be, trend
 
 def run_full_scan():
@@ -298,11 +291,19 @@ def run_full_scan():
 def check_auto_scan():
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
+    
     if not os.path.exists(CLASS_FILE): return True, "Initial Setup"
     try:
         with open(CLASS_FILE, 'r') as f: data = json.load(f)
         file_date = data.get("date")
+        
+        # 1. Date Check
         if file_date != today_str and now.hour >= 18: return True, "Daily Update"
+        
+        # 2. Schema Check (Fix for KeyError)
+        if data.get('stocks') and len(data['stocks']) > 0:
+            if 'Trend' not in data['stocks'][0]: return True, "Schema Update"
+            
         return False, data
     except: return True, "Error"
 
@@ -320,8 +321,8 @@ elif should_scan is True:
 else:
     current_data = payload
 
-# --- POPUP DIALOG (VNS DETAILS) ---
-@st.dialog("Stock Analysis", width="large")
+# --- POPUP DIALOG ---
+@st.dialog("Stock Details", width="large")
 def show_details(item):
     st.subheader(f"{item['Symbol']} : ₹{item['Price']:.2f} ({item['Change']:.2f}%)")
     
@@ -335,7 +336,6 @@ def show_details(item):
     
     st.divider()
     
-    # Table Styling
     def color_rows(row):
         s = row['Type']
         if s == 'bull': return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row)
@@ -367,17 +367,14 @@ if current_data:
     
     st.divider()
     
-    # 1. SEARCH
     search_query = st.text_input("🔍 Search Stock", placeholder="e.g. RELIANCE").upper()
     data = current_data['stocks']
     
-    # 2. FILTER PRICE
+    # FILTERS
     data = [d for d in data if view_min <= d['Price'] <= view_max]
-    
-    # 3. FILTER SEARCH
     if search_query: data = [d for d in data if search_query in d['Symbol']]
         
-    # Buckets
+    # BUCKETS
     high_bull = [d for d in data if d['Category'] == "Highly Bullish"]
     bull = [d for d in data if d['Category'] == "Bullish"]
     high_bear = [d for d in data if d['Category'] == "Highly Bearish"]
@@ -385,23 +382,13 @@ if current_data:
     atak_teji = [d for d in data if d['Category'] == "Atak (Teji Side)"]
     atak_mandi = [d for d in data if d['Category'] == "Atak (Mandi Side)"]
     
-    # Filter Categories
     cats_to_show = []
-    sel_cat = category_filter
-    
-    if sel_cat == "All":
-        cats_to_show = [
-            ("🚀 Highly Bullish", high_bull, "b-high-bull"),
-            ("🟢 Bullish", bull, "b-bull"),
-            ("🩸 Highly Bearish", high_bear, "b-high-bear"),
-            ("🔴 Bearish", bear, "b-bear"),
-            ("⚠️ Atak on Teji", atak_teji, "b-atak-top"),
-            ("🛡️ Atak on Mandi", atak_mandi, "b-atak-bot")
-        ]
-    elif sel_cat == "Bullish Only": cats_to_show = [("🟢 Bullish", bull, "b-bull")]
-    elif sel_cat == "Bearish Only": cats_to_show = [("🔴 Bearish", bear, "b-bear")]
-    elif sel_cat == "High Momentum Only": cats_to_show = [("🚀 Highly Bullish", high_bull, "b-high-bull"), ("🩸 Highly Bearish", high_bear, "b-high-bear")]
-    elif sel_cat == "Atak Only": cats_to_show = [("⚠️ Atak on Teji", atak_teji, "b-atak-top"), ("🛡️ Atak on Mandi", atak_mandi, "b-atak-bot")]
+    if category_filter == "All":
+        cats_to_show = [("🚀 Highly Bullish", high_bull, "b-high-bull"), ("🟢 Bullish", bull, "b-bull"), ("🩸 Highly Bearish", high_bear, "b-high-bear"), ("🔴 Bearish", bear, "b-bear"), ("⚠️ Atak on Teji", atak_teji, "b-atak-top"), ("🛡️ Atak on Mandi", atak_mandi, "b-atak-bot")]
+    elif category_filter == "Bullish Only": cats_to_show = [("🟢 Bullish", bull, "b-bull")]
+    elif category_filter == "Bearish Only": cats_to_show = [("🔴 Bearish", bear, "b-bear")]
+    elif category_filter == "High Momentum Only": cats_to_show = [("🚀 Highly Bullish", high_bull, "b-high-bull"), ("🩸 Highly Bearish", high_bear, "b-high-bear")]
+    elif category_filter == "Atak Only": cats_to_show = [("⚠️ Atak on Teji", atak_teji, "b-atak-top"), ("🛡️ Atak on Mandi", atak_mandi, "b-atak-bot")]
 
     def render_category(title, items, border_class):
         # Force Black Header
@@ -429,21 +416,13 @@ if current_data:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # POPUP BUTTON
                 if st.button(f"🔍 View {item['Symbol']}", key=f"btn_{item['Symbol']}", use_container_width=True):
                     show_details(item)
 
     if category_filter == "All":
         c1, c2, c3 = st.columns(3)
-        with c1: 
-            render_category(cats_to_show[0][0], cats_to_show[0][1], cats_to_show[0][2])
-            render_category(cats_to_show[3][0], cats_to_show[3][1], cats_to_show[3][2])
-        with c2: 
-            render_category(cats_to_show[1][0], cats_to_show[1][1], cats_to_show[1][2])
-            render_category(cats_to_show[4][0], cats_to_show[4][1], cats_to_show[4][2])
-        with c3: 
-            render_category(cats_to_show[2][0], cats_to_show[2][1], cats_to_show[2][2])
-            render_category(cats_to_show[5][0], cats_to_show[5][1], cats_to_show[5][2])
+        with c1: render_category(cats_to_show[0][0], cats_to_show[0][1], cats_to_show[0][2]); render_category(cats_to_show[3][0], cats_to_show[3][1], cats_to_show[3][2])
+        with c2: render_category(cats_to_show[1][0], cats_to_show[1][1], cats_to_show[1][2]); render_category(cats_to_show[4][0], cats_to_show[4][1], cats_to_show[4][2])
+        with c3: render_category(cats_to_show[2][0], cats_to_show[2][1], cats_to_show[2][2]); render_category(cats_to_show[5][0], cats_to_show[5][1], cats_to_show[5][2])
     else:
-        for cat in cats_to_show:
-            render_category(cat[0], cat[1], cat[2])
+        for cat in cats_to_show: render_category(cat[0], cat[1], cat[2])
