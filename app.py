@@ -7,44 +7,52 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS (VISIBILITY FIX) ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
-    /* Force Background to White */
+    /* Force Light Mode Background */
     .stApp { background-color: white; color: black; }
     
-    /* 1. FORCE METRICS TEXT TO BLACK (Fixes visibility issue) */
-    div[data-testid="stMetricValue"] { 
-        color: #000000 !important; 
-        font-size: 1.6rem !important;
-        font-weight: 700 !important;
+    /* CUSTOM METRIC CARDS (Replaces st.metric for better visibility) */
+    .metric-card {
+        background-color: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 15px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
-    div[data-testid="stMetricLabel"] { 
-        color: #444444 !important; 
-        font-weight: 600 !important;
+    .metric-label {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #666; /* Dark Grey Label */
+        margin-bottom: 5px;
+        text-transform: uppercase;
     }
-    
-    /* 2. TREND BADGES */
-    .status-bull { 
-        background-color: #d1e7dd; color: #0f5132; padding: 10px; border-radius: 8px; 
-        font-weight: bold; text-align: center; border: 2px solid #badbcc; font-size: 1.2rem; 
-    }
-    .status-bear { 
-        background-color: #f8d7da; color: #842029; padding: 10px; border-radius: 8px; 
-        font-weight: bold; text-align: center; border: 2px solid #f5c2c7; font-size: 1.2rem; 
-    }
-    .status-neutral { 
-        background-color: #e2e3e5; color: #41464b; padding: 10px; border-radius: 8px; 
-        font-weight: bold; text-align: center; border: 2px solid #d3d6d8; font-size: 1.2rem; 
+    .metric-value {
+        font-size: 1.5rem;
+        font-weight: 800;
+        color: #000; /* Pure Black Value */
     }
 
-    /* 3. TABLE TEXT SIZE */
+    /* TREND BADGES */
+    .trend-bull { background-color: #d1e7dd; color: #0f5132; border: 2px solid #badbcc; }
+    .trend-bear { background-color: #f8d7da; color: #842029; border: 2px solid #f5c2c7; }
+    .trend-neutral { background-color: #e2e3e5; color: #41464b; border: 2px solid #d3d6d8; }
+    
+    .trend-card {
+        padding: 15px;
+        border-radius: 8px;
+        text-align: center;
+        font-weight: bold;
+        font-size: 1.2rem;
+    }
+
+    /* TABLE TEXT SIZE */
     .stDataFrame { font-size: 1.1rem; }
     
-    /* 4. SIDEBAR INPUTS */
-    .stSelectbox label, .stRadio label, .stDateInput label {
-        color: #333 !important;
-    }
+    /* SIDEBAR TEXT */
+    .stSidebar label { color: #333 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -104,15 +112,11 @@ with st.sidebar:
 @st.cache_data(ttl=300)
 def fetch_data(symbol, start, end):
     try:
-        # Encode symbol for URL
         safe_symbol = urllib.parse.quote(symbol)
-        
         headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
         s = requests.Session(); s.headers.update(headers); s.get("https://www.nseindia.com", timeout=5)
-        
         url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={safe_symbol}&type=priceVolumeDeliverable&series=ALL"
         r = s.get(url, timeout=10)
-        
         if r.status_code == 200:
             df = pd.DataFrame(r.json().get('data', []))
             if df.empty: return None
@@ -176,20 +180,35 @@ if run_btn:
         if raw_df is not None:
             df, final_trend, final_res, final_sup = analyze_vns(raw_df)
             
-            # --- OVERALL TREND HEADER ---
+            # --- CUSTOM HEADER CARDS (Guarantees Visibility) ---
             c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.markdown("**Overall Trend**")
-                if final_trend == "Bullish":
-                    st.markdown('<div class="status-bull">BULLISH (TEJI)</div>', unsafe_allow_html=True)
-                elif final_trend == "Bearish":
-                    st.markdown('<div class="status-bear">BEARISH (MANDI)</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="status-neutral">NEUTRAL</div>', unsafe_allow_html=True)
             
-            with c2: st.metric("Last Close", f"{df.iloc[-1]['CH_CLOSING_PRICE']:.2f}")
-            with c3: st.metric("Active Resistance", f"{final_res:.2f}" if final_res else "-")
-            with c4: st.metric("Active Support", f"{final_sup:.2f}" if final_sup else "-")
+            with c1:
+                # Trend Card
+                css_cls = "trend-neutral"
+                text = "NEUTRAL"
+                if final_trend == "Bullish": css_cls, text = "trend-bull", "BULLISH (TEJI)"
+                elif final_trend == "Bearish": css_cls, text = "trend-bear", "BEARISH (MANDI)"
+                
+                st.markdown(f"""
+                <div class="trend-card {css_cls}">
+                    <div style="font-size:0.8rem; margin-bottom:5px;">OVERALL TREND</div>
+                    {text}
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Metric Cards
+            def metric_card(label, value):
+                return f"""
+                <div class="metric-card">
+                    <div class="metric-label">{label}</div>
+                    <div class="metric-value">{value}</div>
+                </div>
+                """
+            
+            with c2: st.markdown(metric_card("Last Close", f"{df.iloc[-1]['CH_CLOSING_PRICE']:.2f}"), unsafe_allow_html=True)
+            with c3: st.markdown(metric_card("Active Resistance", f"{final_res:.2f}" if final_res else "-"), unsafe_allow_html=True)
+            with c4: st.markdown(metric_card("Active Support", f"{final_sup:.2f}" if final_sup else "-"), unsafe_allow_html=True)
             
             st.divider()
             
@@ -199,11 +218,11 @@ if run_btn:
             
             def color_rows(row):
                 s = row['Type']
-                if s == 'bull': return ['background-color: #C6EFCE; color: #006100; font-weight: bold; white-space: pre-wrap;'] * len(row)
-                if s == 'bear': return ['background-color: #FFC7CE; color: #9C0006; font-weight: bold; white-space: pre-wrap;'] * len(row)
-                if s == 'warn': return ['background-color: #FFEB9C; color: #9C5700; font-weight: bold; white-space: pre-wrap;'] * len(row)
-                if s == 'info': return ['background-color: #E6F3FF; color: #000; font-style: italic; white-space: pre-wrap;'] * len(row)
-                return ['white-space: pre-wrap;'] * len(row)
+                if s == 'bull': return ['background-color: #C6EFCE; color: #006100; font-weight: bold'] * len(row)
+                if s == 'bear': return ['background-color: #FFC7CE; color: #9C0006; font-weight: bold'] * len(row)
+                if s == 'warn': return ['background-color: #FFEB9C; color: #9C5700; font-weight: bold'] * len(row)
+                if s == 'info': return ['background-color: #E6F3FF; color: #000; font-style: italic'] * len(row)
+                return [''] * len(row)
 
             st.dataframe(
                 disp_df.style.apply(color_rows, axis=1).format({
