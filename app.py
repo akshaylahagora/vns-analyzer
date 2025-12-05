@@ -6,22 +6,43 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS (THEME SAFE) ---
 st.markdown("""
 <style>
-    .stApp { background-color: white; }
+    /* badges for Trend */
+    .status-bull { 
+        background-color: #d1e7dd; 
+        color: #0f5132; 
+        padding: 10px 20px; 
+        border-radius: 8px; 
+        font-weight: bold; 
+        text-align: center; 
+        border: 1px solid #badbcc;
+        font-size: 1.2rem;
+    }
+    .status-bear { 
+        background-color: #f8d7da; 
+        color: #842029; 
+        padding: 10px 20px; 
+        border-radius: 8px; 
+        font-weight: bold; 
+        text-align: center; 
+        border: 1px solid #f5c2c7;
+        font-size: 1.2rem;
+    }
+    .status-neutral { 
+        background-color: #e2e3e5; 
+        color: #41464b; 
+        padding: 10px 20px; 
+        border-radius: 8px; 
+        font-weight: bold; 
+        text-align: center; 
+        border: 1px solid #d3d6d8;
+        font-size: 1.2rem;
+    }
     
-    /* Metrics Styling */
-    div[data-testid="stMetricValue"] { font-size: 1.4rem; font-weight: bold; color: #333; }
-    div[data-testid="stMetricLabel"] { font-size: 0.9rem; color: #666; }
-    
-    /* Trend Badges */
-    .status-bull { background-color: #C6EFCE; color: #006100; padding: 8px 16px; border-radius: 4px; font-weight: bold; text-align: center; border: 1px solid #006100; }
-    .status-bear { background-color: #FFC7CE; color: #9C0006; padding: 8px 16px; border-radius: 4px; font-weight: bold; text-align: center; border: 1px solid #9C0006; }
-    .status-neutral { background-color: #E6F3FF; color: #000; padding: 8px 16px; border-radius: 4px; font-weight: bold; text-align: center; border: 1px solid #000; }
-    
-    /* Table Text Size */
-    .stDataFrame { font-size: 1.05rem; }
+    /* Make the Dataframe text larger */
+    .stDataFrame { font-size: 1.1rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -123,10 +144,11 @@ if run_btn:
             df, final_trend, final_res, final_sup = analyze_vns(raw_df)
             
             # --- OVERALL TREND HEADER ---
+            # Used st.markdown for badges instead of st.caption which is hard to read
             c1, c2, c3, c4 = st.columns(4)
             
             with c1:
-                st.caption("Overall Trend")
+                st.markdown("**Overall Trend**")
                 if final_trend == "Bullish":
                     st.markdown('<div class="status-bull">BULLISH (TEJI)</div>', unsafe_allow_html=True)
                 elif final_trend == "Bearish":
