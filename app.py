@@ -6,60 +6,12 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS (EXCEL REPLICA) ---
+# --- CUSTOM CSS (Clean Up) ---
 st.markdown("""
 <style>
-    .stApp { background-color: white; color: black; }
-    
-    /* TABLE STYLES */
-    .excel-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-family: 'Segoe UI', Arial, sans-serif;
-        font-size: 14px;
-        color: #000;
-        margin-bottom: 50px;
-    }
-    
-    /* HEADER STYLES - High Readability */
-    .excel-table th {
-        background-color: #EFEFEF; /* Light Grey Header */
-        color: #000000;            /* Black Text */
-        font-weight: bold;
-        border: 1px solid #BDBDBD;
-        padding: 10px;
-        text-align: center;
-        vertical-align: middle;
-    }
-    
-    /* CELL STYLES */
-    .excel-table td {
-        border: 1px solid #D0D0D0;
-        padding: 6px 10px;
-        text-align: center;
-        vertical-align: middle;
-    }
-    
-    /* STACKED DATA (High over Low) */
-    .stack-box {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        line-height: 1.4;
-    }
-    .val-top { font-weight: bold; font-size: 1.1em; color: #000; }
-    .val-bot { font-size: 1.0em; color: #555; }
-    
-    /* SIGNAL COLORS (Excel Standard) */
-    .c-bull { background-color: #C6EFCE; color: #006100; font-weight: bold; } /* Green */
-    .c-bear { background-color: #FFC7CE; color: #9C0006; font-weight: bold; } /* Red */
-    .c-atak { background-color: #FFEB9C; color: #9C5700; font-weight: bold; } /* Yellow */
-    .c-info { background-color: #E6F3FF; color: #000000; font-style: italic;} /* Blue */
-    
-    /* Sub-labels in header */
-    .sub-head { font-size: 0.85em; color: #555; font-weight: normal; display: block; }
-
+    .stApp { background-color: white; }
+    /* Make the table text larger and readable */
+    .stDataFrame { font-size: 1.1rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -67,6 +19,7 @@ st.markdown("""
 STOCK_LIST = ["RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "ITC", "SBIN", "BHARTIARTL", "L&T", "AXISBANK", "KOTAKBANK", "HINDUNILVR", "TATAMOTORS", "MARUTI", "HCLTECH", "SUNPHARMA", "TITAN", "BAJFINANCE", "ULTRACEMCO", "ASIANPAINT", "NTPC", "POWERGRID", "M&M", "ADANIENT", "ADANIPORTS", "COALINDIA", "WIPRO", "BAJAJFINSV", "NESTLEIND", "JSWSTEEL", "GRASIM", "ONGC", "TATASTEEL", "HDFCLIFE", "SBILIFE", "DRREDDY", "EICHERMOT", "CIPLA", "DIVISLAB", "BPCL", "HINDALCO", "HEROMOTOCO", "APOLLOHOSP", "TATACONSUM", "BRITANNIA", "UPL", "ZOMATO", "PAYTM", "DLF", "INDIGO", "HAL", "BEL", "VBL", "TRENT", "JIOFIN", "ADANIPOWER", "IRFC", "PFC", "RECLTD", "BHEL"]
 STOCK_LIST.sort()
 
+# --- STATE ---
 if 'start_date' not in st.session_state: st.session_state.start_date = datetime.now() - timedelta(days=60)
 if 'end_date' not in st.session_state: st.session_state.end_date = datetime.now()
 
@@ -109,10 +62,11 @@ def fetch_data(symbol, start, end):
 # --- LOGIC ---
 def analyze_vns(df):
     df['BU'], df['BE'] = "", ""
-    df['BU_C'], df['BE_C'] = "", "" # Classes
+    df['Type'] = "" # Helper for styling
     trend = "Neutral"
     
-    last_bu, last_be = None, None
+    last_bu = None
+    last_be = None
     
     for i in range(1, len(df)):
         curr = df.iloc[i]; prev = df.iloc[i-1]
@@ -122,42 +76,44 @@ def analyze_vns(df):
         
         # ATAK
         if last_bu and (last_bu*0.995 <= c_h <= last_bu*1.005) and c_c < last_bu:
-            df.at[i, 'BU'] = f"ATAK (Top)<br>{c_h}"
-            df.at[i, 'BU_C'] = "c-atak"
+            df.at[i, 'BU'] = f"ATAK (Top) {c_h}"
+            df.at[i, 'Type'] = "warn"
         if last_be and (last_be*0.995 <= c_l <= last_be*1.005) and c_c > last_be:
-            df.at[i, 'BE'] = f"ATAK (Bottom)<br>{c_l}"
-            df.at[i, 'BE_C'] = "c-atak"
+            df.at[i, 'BE'] = f"ATAK (Bottom) {c_l}"
+            df.at[i, 'Type'] = "warn"
 
         # TREND
         if trend == "Bullish":
-            if c_l < p_l: 
-                df.at[i-1, 'BU'] = f"BU(T) {d_str}<br>{p_h}"
-                df.at[i-1, 'BU_C'] = "c-bull"
+            if c_l < p_l: # Low Broken
+                df.at[i-1, 'BU'] = f"BU(T) {d_str} : {p_h}"
+                df.at[i-1, 'Type'] = "bull"
                 last_bu = p_h
-            if c_h > p_h: 
-                df.at[i-1, 'BE'] = f"R(Teji)<br>{p_l}"
-                df.at[i-1, 'BE_C'] = "c-info"
+            if c_h > p_h: # High Broken
+                df.at[i-1, 'BE'] = f"R(Teji) : {p_l}"
+                df.at[i-1, 'Type'] = "info"
                 last_be = p_l
         
         elif trend == "Bearish":
-            if c_h > p_h: 
-                df.at[i-1, 'BE'] = f"BE(M) {d_str}<br>{p_l}"
-                df.at[i-1, 'BE_C'] = "c-bear"
+            if c_h > p_h: # High Broken
+                df.at[i-1, 'BE'] = f"BE(M) {d_str} : {p_l}"
+                df.at[i-1, 'Type'] = "bear"
                 last_be = p_l
-            if c_l < p_l: 
-                df.at[i-1, 'BU'] = f"R(Mandi) {d_str}<br>{p_h}"
-                df.at[i-1, 'BU_C'] = "c-info"
+            if c_l < p_l: # Low Broken
+                df.at[i-1, 'BU'] = f"R(Mandi) {d_str} : {p_h}"
+                df.at[i-1, 'Type'] = "info"
                 last_bu = p_h
                 
         else: # Neutral
-            if c_h > p_h: trend = "Bullish"; df.at[i-1, 'BE'] = f"Start Teji<br>{p_l}"; df.at[i-1, 'BE_C']="c-bull"; last_be = p_l
-            elif c_l < p_l: trend = "Bearish"; df.at[i-1, 'BU'] = f"Start Mandi<br>{p_h}"; df.at[i-1, 'BU_C']="c-bear"; last_bu = p_h
+            if c_h > p_h: 
+                trend = "Bullish"; df.at[i-1, 'BE'] = f"Start Teji : {p_l}"; df.at[i-1, 'Type']="bull"; last_be = p_l
+            elif c_l < p_l: 
+                trend = "Bearish"; df.at[i-1, 'BU'] = f"Start Mandi : {p_h}"; df.at[i-1, 'Type']="bear"; last_bu = p_h
             
         # SWITCH
         if trend == "Bearish" and last_bu and c_c > last_bu:
-            trend = "Bullish"; df.at[i, 'BU'] = "BREAKOUT (Teji)"; df.at[i, 'BU_C']="c-bull"
+            trend = "Bullish"; df.at[i, 'BU'] = "BREAKOUT (Teji)"; df.at[i, 'Type']="bull"
         if trend == "Bullish" and last_be and c_c < last_be:
-            trend = "Bearish"; df.at[i, 'BE'] = "BREAKDOWN (Mandi)"; df.at[i, 'BE_C']="c-bear"
+            trend = "Bearish"; df.at[i, 'BE'] = "BREAKDOWN (Mandi)"; df.at[i, 'Type']="bear"
             
     return df
 
@@ -171,40 +127,33 @@ if run_btn:
         if raw_df is not None:
             df = analyze_vns(raw_df)
             
-            # --- HTML TABLE BUILDER ---
-            html = """
-            <table class="excel-table">
-                <thead>
-                    <tr>
-                        <th width="15%">Date</th>
-                        <th width="20%">High<br><span class="sub-head">Low</span></th>
-                        <th width="20%">Open<br><span class="sub-head">Close</span></th>
-                        <th width="22%">BU<br><span class="sub-head">Resistance</span></th>
-                        <th width="22%">BE<br><span class="sub-head">Support</span></th>
-                    </tr>
-                </thead>
-                <tbody>
-            """
+            # --- PREPARE CLEAN TABLE ---
+            disp_df = df[['Date', 'CH_OPENING_PRICE', 'CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_CLOSING_PRICE', 'BU', 'BE', 'Type']].copy()
+            disp_df.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'BU (Resist)', 'BE (Support)', 'Type']
             
-            for _, row in df.iterrows():
-                d = row['Date'].strftime('%d-%b-%Y')
-                hl = f"<div class='stack-box'><span class='val-top'>{row['CH_TRADE_HIGH_PRICE']:.2f}</span><span class='val-bot'>{row['CH_TRADE_LOW_PRICE']:.2f}</span></div>"
-                oc = f"<div class='stack-box'><span class='val-top'>{row['CH_OPENING_PRICE']:.2f}</span><span class='val-bot'>{row['CH_CLOSING_PRICE']:.2f}</span></div>"
-                
-                # Check for empty cells to maintain table structure
-                bu_content = row['BU'] if row['BU'] else "&nbsp;"
-                be_content = row['BE'] if row['BE'] else "&nbsp;"
-                
-                html += f"""
-                <tr>
-                    <td>{d}</td>
-                    <td>{hl}</td>
-                    <td>{oc}</td>
-                    <td class="{row['BU_C']}">{bu_content}</td>
-                    <td class="{row['BE_C']}">{be_content}</td>
-                </tr>
-                """
-            html += "</tbody></table>"
-            st.markdown(html, unsafe_allow_html=True)
-        else: st.error("⚠️ Error fetching data.")
+            # --- COLOR STYLING (The Safe Way) ---
+            def color_rows(row):
+                s = row['Type']
+                # High Contrast Excel Colors
+                if s == 'bull': return ['background-color: #C6EFCE; color: #006100; font-weight: bold'] * len(row)
+                if s == 'bear': return ['background-color: #FFC7CE; color: #9C0006; font-weight: bold'] * len(row)
+                if s == 'warn': return ['background-color: #FFEB9C; color: #9C5700; font-weight: bold'] * len(row)
+                if s == 'info': return ['background-color: #E6F3FF; color: #000; font-style: italic'] * len(row)
+                return [''] * len(row)
+
+            # RENDER
+            st.dataframe(
+                disp_df.style.apply(color_rows, axis=1).format({
+                    "Date": lambda t: t.strftime("%d-%b-%Y"),
+                    "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}"
+                }),
+                column_config={
+                    "Type": None, # Hide the helper column
+                    "BU (Resist)": st.column_config.TextColumn(width="medium"),
+                    "BE (Support)": st.column_config.TextColumn(width="medium")
+                },
+                use_container_width=True,
+                height=800
+            )
+        else: st.error("⚠️ Data Error")
 else: st.info("👈 Click RUN")
