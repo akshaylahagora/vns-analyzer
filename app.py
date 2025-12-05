@@ -11,56 +11,69 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS (EXCEL GRID LOOK) ---
 st.markdown("""
 <style>
     .stApp { background-color: #ffffff; }
     
     /* Global Font */
-    html, body, [class*="css"] {
-        font-family: 'Segoe UI', Arial, sans-serif;
+    html, body, div, span, applet, object, iframe, h1, h2, h3, h4, h5, h6, p, blockquote, pre, a, abbr, acronym, address, big, cite, code, del, dfn, em, img, ins, kbd, q, s, samp, small, strike, strong, sub, sup, tt, var, b, u, i, center, dl, dt, dd, ol, ul, li, fieldset, form, label, legend, table, caption, tbody, tfoot, thead, tr, th, td, article, aside, canvas, details, embed, figure, figcaption, footer, header, hgroup, menu, nav, output, ruby, section, summary, time, mark, audio, video {
+        font-family: 'Arial', sans-serif;
     }
 
     /* Tabs */
     div[role="radiogroup"] { flex-wrap: wrap; gap: 5px; }
-    div[role="radiogroup"] label { 
-        border: 1px solid #ddd; 
+    div[role="radiogroup"] > label { 
+        border: 1px solid #ccc; 
         background: #f8f9fa;
-        padding: 5px 15px;
-        border-radius: 4px;
+        color: #333;
     }
 
-    /* TABLE STYLING (The Excel Look) */
-    .vns-table {
+    /* --- THE EXCEL TABLE STYLES --- */
+    .excel-table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 14px;
-        border: 1px solid #ccc;
+        font-size: 15px; /* Larger font */
+        color: #000;
+        margin-top: 20px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
     }
-    .vns-table th {
-        background-color: #2c3e50;
-        color: white;
-        padding: 10px;
+    
+    .excel-table th {
+        background-color: #f2f2f2;
+        color: #333;
+        font-weight: bold;
+        border: 1px solid #999;
+        padding: 12px 8px;
         text-align: center;
-        border: 1px solid #ccc;
     }
-    .vns-table td {
+    
+    .excel-table td {
+        border: 1px solid #999; /* Darker border like Excel */
         padding: 8px;
-        border: 1px solid #ccc;
         text-align: center;
         vertical-align: middle;
+        line-height: 1.4;
     }
+
+    /* Data Stacking */
+    .cell-top { font-weight: bold; font-size: 1.1em; color: #000; display: block; }
+    .cell-bot { font-size: 1.0em; color: #444; display: block; margin-top: 2px; }
+
+    /* --- VNS SIGNAL COLORS (High Contrast) --- */
     
-    /* Number Stacking */
-    .top-val { font-weight: bold; color: #000; font-size: 1.1em; }
-    .bot-val { color: #555; font-size: 0.9em; margin-top: 2px; }
+    /* TEJI: Light Green BG, Black Text */
+    .bg-bull { background-color: #90EE90 !important; color: #000 !important; font-weight: bold; }
     
-    /* VNS Colors (Excel Standard) */
-    .bg-bull { background-color: #C6EFCE; color: #006100; font-weight: bold; } /* Green */
-    .bg-bear { background-color: #FFC7CE; color: #9C0006; font-weight: bold; } /* Red */
-    .bg-atak { background-color: #FFEB9C; color: #9C6500; font-weight: bold; } /* Yellow */
-    .bg-info { background-color: #BDD7EE; color: #000000; font-style: italic; } /* Blue */
+    /* MANDI: Light Red/Salmon BG, Black Text */
+    .bg-bear { background-color: #FF9999 !important; color: #000 !important; font-weight: bold; }
     
+    /* ATAK: Gold BG, Black Text */
+    .bg-atak { background-color: #FFD700 !important; color: #000 !important; font-weight: bold; }
+    
+    /* REACTION: Light Blue BG, Black Text */
+    .bg-info { background-color: #E6F3FF !important; color: #000 !important; font-style: italic; }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -130,37 +143,42 @@ def fetch_nse_data(symbol, start, end):
 
 # --- VNS LOGIC ---
 def analyze_vns(df):
-    df['BU_Class'] = "" # To store CSS class for color
+    df['BU_Class'] = "" 
     df['BE_Class'] = ""
-    df['BU_Text'] = ""  # To store Display Text
+    df['BU_Text'] = ""
     df['BE_Text'] = ""
     
     trend = "Neutral"
     last_bu_level = None
     last_be_level = None
     
+    # Iterate through data
     for i in range(1, len(df)):
         curr_row = df.iloc[i]
         prev_row = df.iloc[i-1]
         
-        curr_high, curr_low = curr_row['CH_TRADE_HIGH_PRICE'], curr_row['CH_TRADE_LOW_PRICE']
-        prev_high, prev_low = prev_row['CH_TRADE_HIGH_PRICE'], prev_row['CH_TRADE_LOW_PRICE']
+        curr_high = curr_row['CH_TRADE_HIGH_PRICE']
+        curr_low = curr_row['CH_TRADE_LOW_PRICE']
+        prev_high = prev_row['CH_TRADE_HIGH_PRICE']
+        prev_low = prev_row['CH_TRADE_LOW_PRICE']
         curr_close = curr_row['CH_CLOSING_PRICE']
         
         low_broken = curr_low < prev_low
         high_broken = curr_high > prev_high
+        
+        # Format Date for the Signal Text
         date_str = prev_row['Date'].strftime('%d-%b').upper()
         
-        # 1. ATAK CHECK
+        # --- 1. ATAK DETECTION ---
         if last_bu_level and (last_bu_level * 0.995 <= curr_high <= last_bu_level * 1.005) and curr_close < last_bu_level:
-            df.at[i, 'BU_Text'] = f"ATAK (Top)\n{curr_high}"
+            df.at[i, 'BU_Text'] = f"ATAK (Top)<br>{curr_high}"
             df.at[i, 'BU_Class'] = "bg-atak"
             
         if last_be_level and (last_be_level * 0.995 <= curr_low <= last_be_level * 1.005) and curr_close > last_be_level:
-            df.at[i, 'BE_Text'] = f"ATAK (Bottom)\n{curr_low}"
+            df.at[i, 'BE_Text'] = f"ATAK (Bottom)<br>{curr_low}"
             df.at[i, 'BE_Class'] = "bg-atak"
 
-        # 2. TREND LOGIC
+        # --- 2. TREND LOGIC ---
         if trend == "Bullish":
             if low_broken: 
                 df.at[i-1, 'BU_Text'] = f"BU(T) {date_str}<br>{prev_high}"
@@ -191,7 +209,7 @@ def analyze_vns(df):
                 df.at[i-1, 'BU_Text'] = f"Start Mandi<br>{prev_high}"
                 df.at[i-1, 'BU_Class'] = "bg-bear"
         
-        # 3. SWITCHING
+        # --- 3. SWITCHING ---
         if trend == "Bearish" and last_bu_level and curr_close > last_bu_level:
              trend = "Bullish"
              df.at[i, 'BU_Text'] = "BREAKOUT (Teji)"
@@ -203,7 +221,7 @@ def analyze_vns(df):
         
     return df
 
-# --- OUTPUT ---
+# --- RENDER OUTPUT ---
 st.title(f"📊 VNS Theory: {selected_stock}")
 st.markdown(f"Analysis: **{st.session_state.start_date.strftime('%d-%b-%Y')}** to **{st.session_state.end_date.strftime('%d-%b-%Y')}**")
 
@@ -213,50 +231,49 @@ if run_btn:
         if raw_df is not None:
             analyzed_df = analyze_vns(raw_df)
             
-            # --- GENERATE HTML TABLE (For Perfect Styling) ---
-            html = """
-            <table class="vns-table">
+            # --- CONSTRUCT HTML TABLE ---
+            table_html = """
+            <table class="excel-table">
                 <thead>
                     <tr>
-                        <th>Date</th>
-                        <th>High<br>Low</th>
-                        <th>Open<br>Close</th>
-                        <th>BU (Resistance)</th>
-                        <th>BE (Support)</th>
+                        <th style="width:15%">Date</th>
+                        <th style="width:20%">High<br><span style="font-weight:normal; font-size:0.9em">Low</span></th>
+                        <th style="width:20%">Open<br><span style="font-weight:normal; font-size:0.9em">Close</span></th>
+                        <th style="width:22%">BU (Resistance)</th>
+                        <th style="width:22%">BE (Support)</th>
                     </tr>
                 </thead>
                 <tbody>
             """
             
             for index, row in analyzed_df.iterrows():
-                date_str = row['Date'].strftime('%d-%b-%Y')
+                date_display = row['Date'].strftime('%d-%b-%Y')
                 
-                # Stacked Values
-                hl_cell = f"<div class='top-val'>{row['CH_TRADE_HIGH_PRICE']:.2f}</div><div class='bot-val'>{row['CH_TRADE_LOW_PRICE']:.2f}</div>"
-                oc_cell = f"<div class='top-val'>{row['CH_OPENING_PRICE']:.2f}</div><div class='bot-val'>{row['CH_CLOSING_PRICE']:.2f}</div>"
+                # Stacked Numbers
+                high_low = f"<span class='cell-top'>{row['CH_TRADE_HIGH_PRICE']:.2f}</span><span class='cell-bot'>{row['CH_TRADE_LOW_PRICE']:.2f}</span>"
+                open_close = f"<span class='cell-top'>{row['CH_OPENING_PRICE']:.2f}</span><span class='cell-bot'>{row['CH_CLOSING_PRICE']:.2f}</span>"
                 
-                # BU Cell
+                # VNS Columns with Colors
+                bu_content = row['BU_Text']
                 bu_class = row['BU_Class']
-                bu_text = row['BU_Text'] if row['BU_Text'] else ""
                 
-                # BE Cell
+                be_content = row['BE_Text']
                 be_class = row['BE_Class']
-                be_text = row['BE_Text'] if row['BE_Text'] else ""
                 
-                html += f"""
+                table_html += f"""
                 <tr>
-                    <td>{date_str}</td>
-                    <td>{hl_cell}</td>
-                    <td>{oc_cell}</td>
-                    <td class="{bu_class}">{bu_text}</td>
-                    <td class="{be_class}">{be_text}</td>
+                    <td>{date_display}</td>
+                    <td>{high_low}</td>
+                    <td>{open_close}</td>
+                    <td class="{bu_class}">{bu_content}</td>
+                    <td class="{be_class}">{be_content}</td>
                 </tr>
                 """
                 
-            html += "</tbody></table>"
+            table_html += "</tbody></table>"
             
-            # Render HTML
-            st.markdown(html, unsafe_allow_html=True)
+            # Render HTML safely
+            st.markdown(table_html, unsafe_allow_html=True)
             
         else: st.error("⚠️ Could not fetch data.")
 else: st.info("👈 Select options and click RUN.")
