@@ -19,12 +19,26 @@ st.markdown("""
     /* Force Light Mode */
     .stApp { background-color: white; color: black; }
     
-    /* VISIBILITY FIX FOR METRICS */
-    div[data-testid="stMetricValue"] { 
-        color: #000000 !important; 
+    /* Custom Metric Card (Forces Visibility) */
+    .metric-card {
+        background-color: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 10px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
-    div[data-testid="stMetricLabel"] { 
-        color: #444444 !important; 
+    .metric-label {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #666; /* Dark Grey */
+        margin-bottom: 4px;
+        text-transform: uppercase;
+    }
+    .metric-value {
+        font-size: 1.2rem;
+        font-weight: 800;
+        color: #000; /* Pure Black */
     }
     
     /* Card Container */
@@ -120,9 +134,7 @@ with st.sidebar:
 # --- CORE LOGIC ---
 def fetch_stock_data(symbol, start_date):
     try:
-        # Encode symbol for URL (Handles M&M)
         safe_symbol = urllib.parse.quote(symbol)
-        
         end = datetime.now()
         req_start = start_date - timedelta(days=5) 
         headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
@@ -232,10 +244,14 @@ else:
 def show_details(stock):
     st.subheader(f"{stock['Symbol']} : ₹{stock['Close']:.2f}")
     
+    # Use Custom Metric Cards instead of st.metric for visibility
     c1, c2, c3 = st.columns(3)
-    c1.metric("Trend", stock['Trend'])
-    c2.metric("Resistance", f"{stock['BU']:.2f}" if stock['BU'] else "-")
-    c3.metric("Support", f"{stock['BE']:.2f}" if stock['BE'] else "-")
+    def card(label, value):
+        return f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>"""
+    
+    with c1: st.markdown(card("Trend", stock['Trend']), unsafe_allow_html=True)
+    with c2: st.markdown(card("Resistance (BU)", f"{stock['BU']:.2f}" if stock['BU'] else "-"), unsafe_allow_html=True)
+    with c3: st.markdown(card("Support (BE)", f"{stock['BE']:.2f}" if stock['BE'] else "-"), unsafe_allow_html=True)
     
     st.divider()
     
