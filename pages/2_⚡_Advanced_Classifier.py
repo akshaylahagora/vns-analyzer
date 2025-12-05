@@ -13,18 +13,33 @@ st.set_page_config(page_title="Advanced Classifier", page_icon="⚡", layout="wi
 st.title("⚡ Advanced VNS Classifier")
 st.markdown("Identifies **Breakouts**, **Trend Continuation**, and **Reversal Risks**. • **Auto-Saves Results**")
 
-# --- PRO CSS (VISIBILITY & LAYOUT) ---
+# --- PRO CSS (VISIBILITY FIXES) ---
 st.markdown("""
 <style>
-    /* Force Light Mode */
-    .stApp { background-color: white; color: black; }
+    /* 1. FORCE LIGHT BACKGROUND & BLACK TEXT GLOBALLY */
+    .stApp { 
+        background-color: white !important; 
+        color: black !important; 
+    }
     
-    /* VISIBILITY FIXES */
-    div[data-testid="stMetricValue"], div[data-testid="stMetricLabel"], .stMarkdown {
+    /* 2. FIX EXPANDER HEADERS (The "Red Marked Area" Issue) */
+    .streamlit-expanderHeader {
+        color: #000000 !important; /* Force Black Text */
+        background-color: #f8f9fa !important; /* Light Grey Background */
+        font-weight: 700 !important;
+        border-radius: 8px;
+    }
+    .streamlit-expanderContent {
+        background-color: white !important;
+        color: black !important;
+    }
+    
+    /* 3. FIX METRIC VISIBILITY */
+    div[data-testid="stMetricValue"], div[data-testid="stMetricLabel"], .stMarkdown p {
         color: #000000 !important;
     }
     
-    /* CARD DESIGN */
+    /* 4. CARD DESIGN */
     .class-card {
         background-color: #ffffff;
         padding: 15px;
@@ -40,7 +55,7 @@ st.markdown("""
     }
     .class-card:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
     
-    /* TEXT STYLES (Forced Colors) */
+    /* TEXT STYLES */
     .stock-title { font-size: 1.2rem; font-weight: 800; color: #2c3e50 !important; }
     .stock-price { font-size: 1.1rem; font-weight: 600; color: #333 !important; }
     .signal-text { font-size: 0.9rem; font-weight: 600; margin-top: 5px; color: #555 !important; }
@@ -328,6 +343,9 @@ if current_data:
         ]
 
     def render_category(title, items, border_class):
+        # Explicit black color for expander header
+        st.markdown("""<style>.streamlit-expanderHeader {color: black !important; font-weight: bold;}</style>""", unsafe_allow_html=True)
+        
         with st.expander(f"{title} ({len(items)})", expanded=True):
             if not items: st.caption("No stocks.")
             
@@ -353,20 +371,15 @@ if current_data:
     # Render in Columns if showing All, else Stack
     if sel_cat == "All":
         c1, c2, c3 = st.columns(3)
-        # Distribution logic
-        # Col 1: High Bull, Bear
         with c1: 
             render_category(cats_to_show[0][0], cats_to_show[0][1], cats_to_show[0][2])
             render_category(cats_to_show[3][0], cats_to_show[3][1], cats_to_show[3][2])
-        # Col 2: Bull, Atak Top
         with c2: 
             render_category(cats_to_show[1][0], cats_to_show[1][1], cats_to_show[1][2])
             render_category(cats_to_show[4][0], cats_to_show[4][1], cats_to_show[4][2])
-        # Col 3: High Bear, Atak Bot
         with c3: 
             render_category(cats_to_show[2][0], cats_to_show[2][1], cats_to_show[2][2])
             render_category(cats_to_show[5][0], cats_to_show[5][1], cats_to_show[5][2])
     else:
-        # Single column layout for filtered view
         for cat in cats_to_show:
             render_category(cat[0], cat[1], cat[2])
