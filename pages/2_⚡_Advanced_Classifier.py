@@ -98,7 +98,6 @@ SECTOR_MAP = {
     "TITAN": "Consumer", "ASIANPAINT": "Consumer", "BERGEPAINT": "Consumer", "HAVELLS": "Consumer", "VOLTAS": "Consumer", "TRENT": "Consumer", "PIDILITIND": "Consumer", "PAGEIND": "Consumer", "JIOFIN": "Finance", "BHARTIARTL": "Telecom", "IDEA": "Telecom", "INDHOTEL": "Hospitality"
 }
 
-# Add default "Others" for any missing stock
 FNO_STOCKS_LIST = list(SECTOR_MAP.keys())
 FNO_STOCKS_LIST.sort()
 
@@ -204,12 +203,14 @@ def classify_stock(df):
             if high_broken: trend="Bullish"; last_be=p_l; current_signal="Start Bull"; be_val=p_l; signal_type="bull"
             elif low_broken: trend="Bearish"; last_bu=p_h; current_signal="Start Bear"; bu_val=p_h; signal_type="bear"
             
-        if trend == "Bearish" and last_bu and c_c > last_bu: trend = "Bullish"; current_signal = "BREAKOUT (Teji)"; bu_val=None; signal_type="bull"
-        if trend == "Bullish" and last_be and c_c < last_be: trend = "Bearish"; current_signal = "BREAKDOWN (Mandi)"; be_val=None; signal_type="bear"
+        if trend == "Bearish" and last_bu and c_c > last_bu: trend = "Bullish"; current_signal = "BREAKOUT (Fresh Teji)"; bu_val=None; signal_type="bull"
+        if trend == "Bullish" and last_be and c_c < last_be: trend = "Bearish"; current_signal = "BREAKDOWN (Fresh Mandi)"; be_val=None; signal_type="bear"
             
         history_records.append({
-            'Date': row['Date'].strftime('%d-%b-%Y'), 'Open': row['CH_OPENING_PRICE'], 'High': row['CH_TRADE_HIGH_PRICE'],
-            'Low': row['CH_TRADE_LOW_PRICE'], 'Close': row['CH_CLOSING_PRICE'], 'BU': bu_val, 'BE': be_val, 'Signal': current_signal, 'Type': signal_type
+            'Date': row['Date'].strftime('%d-%b-%Y'),
+            'Open': row['CH_OPENING_PRICE'], 'High': row['CH_TRADE_HIGH_PRICE'],
+            'Low': row['CH_TRADE_LOW_PRICE'], 'Close': row['CH_CLOSING_PRICE'],
+            'BU': bu_val, 'BE': be_val, 'Signal': current_signal, 'Type': signal_type
         })
 
         if i == len(df) - 1:
@@ -223,7 +224,6 @@ def classify_stock(df):
 
     last = df.iloc[-1]
     pct = ((last['CH_CLOSING_PRICE'] - last['CH_PREVIOUS_CLS_PRICE']) / last['CH_PREVIOUS_CLS_PRICE']) * 100
-    
     return category, signal_desc, last['CH_CLOSING_PRICE'], pct, history_records, last_bu, last_be, trend
 
 def run_full_scan():
@@ -237,7 +237,6 @@ def run_full_scan():
         if df is not None:
             cat, sig, close, chg, history, fin_bu, fin_be, fin_trend = classify_stock(df)
             if close > 0: 
-                # Add Sector info to result
                 sec = SECTOR_MAP.get(stock, "Other")
                 results.append({ "Symbol": stock, "Sector": sec, "Price": close, "Change": chg, "Category": cat, "Signal": sig, "History": history, "BU": fin_bu, "BE": fin_be, "Trend": fin_trend })
         bar.progress((i + 1) / len(FNO_STOCKS_LIST)); time.sleep(0.1) 
@@ -252,35 +251,21 @@ def check_auto_scan():
     if not os.path.exists(CLASS_FILE): return True, "Initial Setup"
     try:
         with open(CLASS_FILE, 'r') as f: data = json.load(f)
-        
-        # 1. Date Check (After 6 PM)
         if data.get("date") != today_str and now.hour >= 18: return True, "Daily Update"
-        
-        # 2. Duration Mismatch Check (User changed setting -> Must Re-scan)
         if data.get("duration_label") != st.session_state.class_duration_label: return True, "Duration Change"
-        
-        # 3. Schema Check (Corrupted File)
+        # SCHEMA CHECK: Verify new fields (Sector) exist
         if data.get('stocks') and len(data['stocks']) > 0:
-            if 'Trend' not in data['stocks'][0]: return True, "Schema Fix"
-            
+            if 'Sector' not in data['stocks'][0]: return True, "Schema Update"
         return False, data
     except: return True, "Error"
 
-# --- CONTROLLER ---
+# --- MAIN ---
 should_scan, payload = check_auto_scan()
+if force_scan: st.toast("Scanning..."); current_data = run_full_scan(); st.rerun()
+elif should_scan is True: st.info(f"Auto-Scan... {payload}"); current_data = run_full_scan(); st.rerun()
+else: current_data = payload
 
-if force_scan:
-    st.toast("Forcing Scan...")
-    current_data = run_full_scan()
-    st.rerun()
-elif should_scan is True:
-    st.info(f"📅 Running Auto-Scan ({payload})...")
-    current_data = run_full_scan()
-    st.rerun()
-else:
-    current_data = payload
-
-# --- POPUP DIALOG ---
+# --- POPUP ---
 @st.dialog("Stock Analysis", width="large")
 def show_details(item):
     st.subheader(f"{item['Symbol']} : ₹{item['Price']:.2f} ({item['Change']:.2f}%)")
@@ -311,17 +296,12 @@ if current_data:
     search_query = st.text_input("🔍 Search Stock", placeholder="e.g. RELIANCE").upper()
     data = current_data['stocks']
     
-    # 1. APPLY PRICE FILTER
     data = [d for d in data if view_min <= d['Price'] <= view_max]
     
-    # 2. APPLY SECTOR FILTER
-    if sector_filter != "All":
-        data = [d for d in data if d.get('Sector') == sector_filter]
-        
-    # 3. APPLY SEARCH
+    if sector_filter != "All": data = [d for d in data if d.get('Sector') == sector_filter]
+    
     if search_query: data = [d for d in data if search_query in d['Symbol']]
         
-    # 4. APPLY CATEGORY FILTER
     high_bull = [d for d in data if d['Category'] == "Highly Bullish"]
     bull = [d for d in data if d['Category'] == "Bullish"]
     high_bear = [d for d in data if d['Category'] == "Highly Bearish"]
