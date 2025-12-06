@@ -7,50 +7,37 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS (Cleaned for Light Theme) ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
-    /* Metric Cards */
+    /* Force Light Mode */
+    .stApp { background-color: white; color: black; }
+    
+    /* CUSTOM METRIC CARDS */
     .metric-card {
-        background-color: #ffffff;
+        background-color: #f8f9fa;
         border: 1px solid #e0e0e0;
         border-radius: 8px;
         padding: 15px;
         text-align: center;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
-    .metric-label {
-        font-size: 0.9rem;
-        font-weight: 600;
-        color: #666; 
-        margin-bottom: 5px;
-        text-transform: uppercase;
-    }
-    .metric-value {
-        font-size: 1.5rem;
-        font-weight: 800;
-        color: #000; 
-    }
+    .metric-label { font-size: 0.9rem; font-weight: 600; color: #666; margin-bottom: 5px; text-transform: uppercase; }
+    .metric-value { font-size: 1.5rem; font-weight: 800; color: #000; }
 
-    /* Trend Badges */
-    .trend-card {
-        padding: 15px;
-        border-radius: 8px;
-        text-align: center;
-        font-weight: bold;
-        font-size: 1.2rem;
-        border: 2px solid transparent;
-    }
+    /* TREND BADGES */
+    .trend-card { padding: 15px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 1.2rem; border: 2px solid transparent; }
     .trend-bull { background-color: #d1e7dd; color: #0f5132; border-color: #badbcc; }
     .trend-bear { background-color: #f8d7da; color: #842029; border-color: #f5c2c7; }
     .trend-neutral { background-color: #e2e3e5; color: #41464b; border-color: #d3d6d8; }
 
-    /* Table Text */
+    /* TABLE TEXT SIZE */
     .stDataFrame { font-size: 1.1rem; }
+    .stSidebar label { color: #333 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- STOCK LIST ---
+# --- COMPLETE STOCK LIST (180+) ---
 STOCK_LIST = [
     "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
     "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
@@ -102,17 +89,35 @@ with st.sidebar:
     st.divider()
     run_btn = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
-# --- DATA ---
+# --- IMPROVED FETCH DATA (Bypass Blocking) ---
 @st.cache_data(ttl=300)
 def fetch_data(symbol, start, end):
     try:
         safe_symbol = urllib.parse.quote(symbol)
-        headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
-        s = requests.Session(); s.headers.update(headers); s.get("https://www.nseindia.com", timeout=5)
+        
+        # Robust Headers
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.nseindia.com/get-quotes/equity?symbol=" + safe_symbol,
+            "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-Fetch-Site": "same-origin"
+        }
+        
+        s = requests.Session()
+        s.headers.update(headers)
+        
+        # Cookie Init
+        s.get("https://www.nseindia.com", timeout=5)
+        
         url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={safe_symbol}&type=priceVolumeDeliverable&series=ALL"
         r = s.get(url, timeout=10)
+        
         if r.status_code == 200:
-            df = pd.DataFrame(r.json().get('data', []))
+            data = r.json()
+            if 'data' not in data: return None
+            df = pd.DataFrame(data['data'])
             if df.empty: return None
             df = df[df['CH_SERIES'] == 'EQ']
             df['Date'] = pd.to_datetime(df['mTIMESTAMP'])
@@ -177,8 +182,7 @@ if run_btn:
             # --- HEADER CARDS ---
             c1, c2, c3, c4 = st.columns(4)
             
-            def card(label, value):
-                return f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>"""
+            def card(label, value): return f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>"""
             
             with c1:
                 css_cls, text = "trend-neutral", "NEUTRAL"
