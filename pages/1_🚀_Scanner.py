@@ -17,7 +17,7 @@ st.markdown("Automated VNS Scanner • **Updates daily after 6:00 PM**")
 st.markdown("""
 <style>
     .stApp { background-color: white; color: black; }
-    div[data-testid="stMetricValue"], div[data-testid="stMetricLabel"] { color: #000000 !important; }
+    div[data-testid="stMetricValue"] { color: #000000 !important; }
     
     .stock-card {
         background-color: #ffffff;
@@ -80,8 +80,9 @@ with st.sidebar:
     st.radio("Duration", ["1M", "2M", "3M", "6M", "1Y"], index=0, horizontal=True, key="duration_select", on_change=update_scan_settings)
     st.divider()
     c1, c2 = st.columns(2)
-    view_min = c1.number_input("Min", 1000, value=1000)
-    view_max = c2.number_input("Max", 0, value=100000)
+    # --- FIXED VARIABLES HERE ---
+    view_min_price = c1.number_input("Min", 1000, value=1000)
+    view_max_price = c2.number_input("Max", 0, value=100000)
     st.divider()
     scan_delay = st.slider("Delay (sec)", 0.0, 1.0, 0.1)
     force_scan = st.button("🔄 Force Refresh", type="primary", use_container_width=True)
@@ -123,7 +124,7 @@ def analyze_vns_full(df):
         elif trend == "Mandi":
             if c_l < last_trough:
                 be = f"M (Mandi) {c_l:.2f}"; signal_type="bear_dark"; signal="New Low"
-                swing_df = df.iloc[last_trough_idx:i+1]; reaction_resist = swing_df['High'].max()
+                swing = df.iloc[last_trough_idx:i+1]; reaction_resist = swing['High'].max()
                 bu = f"R (Resist) {reaction_resist:.2f}"
                 last_trough = c_l; last_trough_idx = i
             elif c_h > reaction_resist:
@@ -132,13 +133,6 @@ def analyze_vns_full(df):
         else:
             if c_h > last_peak: trend="Teji"; bu="Start Teji"; signal_type="bull_dark"; last_peak=c_h; last_peak_idx=i
             elif c_l < last_trough: trend="Mandi"; be="Start Mandi"; signal_type="bear_dark"; last_trough=c_l; last_trough_idx=i
-        
-        # Use color types matching Home.py
-        # Mapping logic to color types:
-        # T (Teji) -> bull_dark (Dark Green)
-        # M (Mandi) -> bear_dark (Dark Red)
-        # R (Sup/Res) -> Light Green / Light Red based on trend context
-        # ATAK -> Light Red (Top) / Light Green (Bottom)
         
         color_type = ""
         if "T (Teji)" in str(bu) or "Start Teji" in str(bu): color_type = "bull_dark"
@@ -186,7 +180,11 @@ else: current_data = payload
 # --- DISPLAY ---
 if current_data:
     st.caption(f"Last Scanned: {current_data['date']} {current_data['last_updated']}")
-    all_s = current_data['stocks']; filtered = [s for s in all_s if view_min_price <= s['Close'] <= view_max_price]
+    all_s = current_data['stocks']; 
+    
+    # --- FILTER USING CORRECT VARIABLES ---
+    filtered = [s for s in all_s if view_min_price <= s['Close'] <= view_max_price]
+    
     bulls = [s for s in filtered if s['Trend'] == "Teji"]
     bears = [s for s in filtered if s['Trend'] == "Mandi"]
     neut = [s for s in filtered if s['Trend'] == "Neutral"]
@@ -200,13 +198,11 @@ if current_data:
         h = pd.DataFrame(s['History'])
         def color(row):
             t = row['Type']
-            # EXACT COLOR MAPPING FROM HOME.PY
-            if t=='bull_dark': return ['background-color: #228B22; color: white; font-weight: bold']*len(row) # Dark Green
-            if t=='bear_dark': return ['background-color: #8B0000; color: white; font-weight: bold']*len(row) # Dark Red
-            if t=='bull_light': return ['background-color: #90EE90; color: black; font-weight: bold']*len(row) # Light Green
-            if t=='bear_light': return ['background-color: #FFC0CB; color: black; font-weight: bold']*len(row) # Light Red
+            if t=='bull_dark': return ['background-color: #228B22; color: white; font-weight: bold']*len(row)
+            if t=='bear_dark': return ['background-color: #8B0000; color: white; font-weight: bold']*len(row)
+            if t=='bull_light': return ['background-color: #90EE90; color: black; font-weight: bold']*len(row)
+            if t=='bear_light': return ['background-color: #FFC0CB; color: black; font-weight: bold']*len(row)
             return ['']*len(row)
-            
         st.dataframe(h.style.apply(color, axis=1), column_config={"Type": None}, use_container_width=True, height=400)
 
     def render(lst, title, col):
