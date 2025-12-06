@@ -1,47 +1,23 @@
 import streamlit as st
 import pandas as pd
-import requests
+import yfinance as yf
 import time
 import json
 import os
-import urllib.parse
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pro F&O Scanner", page_icon="🔭", layout="wide")
 
 st.title("🔭 Pro F&O Scanner")
-st.markdown("Automated VNS Scanner • **Updates daily after 6:00 PM**")
+st.markdown("Automated VNS Scanner • **Powered by Yahoo Finance**")
 
 # --- CUSTOM CSS (VISIBILITY FIX) ---
 st.markdown("""
 <style>
-    /* Force Light Mode */
     .stApp { background-color: white; color: black; }
+    div[data-testid="stMetricValue"], div[data-testid="stMetricLabel"] { color: #000000 !important; }
     
-    /* Custom Metric Card (Forces Visibility) */
-    .metric-card {
-        background-color: #f8f9fa;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 10px;
-        text-align: center;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .metric-label {
-        font-size: 0.85rem;
-        font-weight: 600;
-        color: #666; /* Dark Grey */
-        margin-bottom: 4px;
-        text-transform: uppercase;
-    }
-    .metric-value {
-        font-size: 1.2rem;
-        font-weight: 800;
-        color: #000; /* Pure Black */
-    }
-    
-    /* Card Container */
     .stock-card {
         background-color: #ffffff;
         padding: 15px;
@@ -53,24 +29,20 @@ st.markdown("""
     .stock-symbol { font-size: 1.1em; font-weight: 800; color: #333; }
     .stock-price { font-size: 1.0em; font-weight: 600; color: #555; }
     
-    /* Headers for Columns */
     .col-header { 
         padding: 10px; border-radius: 8px; color: white; 
         font-weight: bold; text-align: center; margin-bottom: 15px; text-transform: uppercase; 
     }
     
-    /* Modal/Dialog Styling */
     div[data-testid="stDialog"] { width: 85vw; } 
-    
-    /* Sidebar text fix */
     .stSidebar label { color: #333 !important; }
+    .streamlit-expanderHeader { color: #000000 !important; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- CONFIGURATION ---
 SCAN_FILE = "daily_scan_results.json" 
 
-# COMPLETE F&O STOCK LIST
 FNO_STOCKS = [
     "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
     "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
@@ -127,36 +99,47 @@ with st.sidebar:
     view_max_price = c2.number_input("Max", min_value=0, value=100000, step=500)
     st.divider()
     st.subheader("3. Speed")
-    scan_delay = st.slider("Delay (sec)", 0.1, 5.0, 0.5, 0.1)
+    st.info("Yahoo Finance is fast! Default speed is optimized.")
+    scan_delay = st.slider("Delay (sec)", 0.0, 2.0, 0.1, 0.1)
     st.divider()
     force_scan = st.button("🔄 Force Refresh", type="primary", use_container_width=True)
 
-# --- CORE LOGIC ---
+# --- CORE LOGIC (YAHOO FINANCE) ---
 def fetch_stock_data(symbol, start_date):
     try:
-        safe_symbol = urllib.parse.quote(symbol)
-        end = datetime.now()
-        req_start = start_date - timedelta(days=5) 
-        headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
-        session = requests.Session(); session.headers.update(headers)
-        session.get("https://www.nseindia.com", timeout=3)
-        url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={req_start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={safe_symbol}&type=priceVolumeDeliverable&series=ALL"
-        response = session.get(url, timeout=5)
-        if response.status_code == 200:
-            df = pd.DataFrame(response.json().get('data', []))
-            if df.empty: return None
-            df = df[df['CH_SERIES'] == 'EQ']
-            df['Date'] = pd.to_datetime(df['mTIMESTAMP'])
-            for col in ['CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_OPENING_PRICE', 'CH_CLOSING_PRICE']:
-                df[col] = df[col].astype(float)
-            return df.sort_values('Date').reset_index(drop=True)
+        yf_symbol = f"{symbol}.NS"
+        # Fetch slightly more data to ensure we have enough
+        req_start = start_date - timedelta(days=5)
+        
+        # Download data
+        df = yf.download(yf_symbol, start=req_start, progress=False)
+        
+        if df.empty: return None
+        
+        # Flatten MultiIndex if present
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
+        df = df.reset_index()
+        
+        # Rename columns to match VNS logic
+        df = df.rename(columns={
+            'Date': 'Date',
+            'Open': 'CH_OPENING_PRICE',
+            'High': 'CH_TRADE_HIGH_PRICE',
+            'Low': 'CH_TRADE_LOW_PRICE',
+            'Close': 'CH_CLOSING_PRICE'
+        })
+        
+        df['Date'] = pd.to_datetime(df['Date'])
+        return df.sort_values('Date').reset_index(drop=True)
     except: return None
-    return None
 
 def analyze_vns_full(df):
     results = []
     trend = "Neutral"
     last_bu, last_be = None, None
+    
     for i in range(len(df)):
         row = df.iloc[i]; prev = df.iloc[i-1] if i > 0 else None
         bu, be, signal, signal_type = None, None, "", ""
@@ -244,14 +227,16 @@ else:
 def show_details(stock):
     st.subheader(f"{stock['Symbol']} : ₹{stock['Close']:.2f}")
     
-    # Use Custom Metric Cards instead of st.metric for visibility
     c1, c2, c3 = st.columns(3)
     def card(label, value):
-        return f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>"""
+        return f"""<div style="background:#f9f9f9; padding:10px; border-radius:8px; border:1px solid #ddd; text-align:center;">
+                    <div style="color:#666; font-size:0.8rem; font-weight:bold;">{label}</div>
+                    <div style="color:#000; font-size:1.2rem; font-weight:bold;">{value}</div>
+                   </div>"""
     
     with c1: st.markdown(card("Trend", stock['Trend']), unsafe_allow_html=True)
-    with c2: st.markdown(card("Resistance (BU)", f"{stock['BU']:.2f}" if stock['BU'] else "-"), unsafe_allow_html=True)
-    with c3: st.markdown(card("Support (BE)", f"{stock['BE']:.2f}" if stock['BE'] else "-"), unsafe_allow_html=True)
+    with c2: st.markdown(card("Resistance", f"{stock['BU']:.2f}" if stock['BU'] else "-"), unsafe_allow_html=True)
+    with c3: st.markdown(card("Support", f"{stock['BE']:.2f}" if stock['BE'] else "-"), unsafe_allow_html=True)
     
     st.divider()
     
