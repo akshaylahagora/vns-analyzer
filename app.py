@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import urllib.parse
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIG ---
@@ -9,10 +10,9 @@ st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wid
 # --- CUSTOM CSS ---
 st.markdown("""
 <style>
-    /* Force Light Mode */
     .stApp { background-color: white; color: black; }
     
-    /* CUSTOM METRIC CARDS */
+    /* Header Cards */
     .metric-card {
         background-color: #f8f9fa;
         border: 1px solid #e0e0e0;
@@ -21,22 +21,24 @@ st.markdown("""
         text-align: center;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
-    .metric-label { font-size: 0.9rem; font-weight: 600; color: #666; margin-bottom: 5px; text-transform: uppercase; }
-    .metric-value { font-size: 1.5rem; font-weight: 800; color: #000; }
+    .metric-label { font-size: 0.9rem; font-weight: 600; color: #666; text-transform: uppercase; }
+    .metric-value { font-size: 1.6rem; font-weight: 700; color: #000; }
+    
+    /* Trend Badges */
+    .trend-card { padding: 15px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 1.2rem; }
+    .trend-bull { background-color: #d1e7dd; color: #0f5132; border: 2px solid #badbcc; }
+    .trend-bear { background-color: #f8d7da; color: #842029; border: 2px solid #f5c2c7; }
+    .trend-neutral { background-color: #e2e3e5; color: #41464b; border: 2px solid #d3d6d8; }
 
-    /* TREND BADGES */
-    .trend-card { padding: 15px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 1.2rem; border: 2px solid transparent; }
-    .trend-bull { background-color: #d1e7dd; color: #0f5132; border-color: #badbcc; }
-    .trend-bear { background-color: #f8d7da; color: #842029; border-color: #f5c2c7; }
-    .trend-neutral { background-color: #e2e3e5; color: #41464b; border-color: #d3d6d8; }
-
-    /* TABLE TEXT SIZE */
+    /* Table */
     .stDataFrame { font-size: 1.1rem; }
+    .stDataFrame td { vertical-align: middle !important; white-space: pre-wrap !important; }
+    
     .stSidebar label { color: #333 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- COMPLETE STOCK LIST (180+) ---
+# --- STOCK LIST ---
 STOCK_LIST = [
     "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
     "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
@@ -88,137 +90,150 @@ with st.sidebar:
     st.divider()
     run_btn = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
-# --- ROBUST DATA FETCHING (VIA YFINANCE) ---
+# --- DATA ---
 @st.cache_data(ttl=300)
 def fetch_data(symbol, start, end):
     try:
-        # Convert to Yahoo Finance format (e.g., RELIANCE -> RELIANCE.NS)
         yf_symbol = f"{symbol}.NS"
-        
-        # Fetch Data
-        df = yf.download(yf_symbol, start=start, end=end + timedelta(days=1), progress=False)
-        
-        if df.empty:
-            return None
-            
-        # Flatten MultiIndex columns if present (common in new yfinance versions)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
-        # Reset index to get Date as a column
+        # Fetch extra history for calculation context (important for finding swing points)
+        req_start = start - timedelta(days=60)
+        df = yf.download(yf_symbol, start=req_start, end=end + timedelta(days=1), progress=False)
+        if df.empty: return None
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df = df.reset_index()
-        
-        # Rename columns to match VNS Logic
-        df = df.rename(columns={
-            'Date': 'Date',
-            'Open': 'CH_OPENING_PRICE',
-            'High': 'CH_TRADE_HIGH_PRICE',
-            'Low': 'CH_TRADE_LOW_PRICE',
-            'Close': 'CH_CLOSING_PRICE'
-        })
-        
-        # Ensure correct types
+        df = df.rename(columns={'Date': 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close'})
         df['Date'] = pd.to_datetime(df['Date'])
-        for c in ['CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_OPENING_PRICE', 'CH_CLOSING_PRICE']:
-            df[c] = df[c].astype(float)
-            
         return df.sort_values('Date').reset_index(drop=True)
-        
-    except Exception as e:
-        return None
+    except: return None
 
-# --- LOGIC ---
+# --- NEW VNS LOGIC ---
 def analyze_vns(df):
     df['BU'], df['BE'], df['Type'] = "", "", ""
     trend = "Neutral"
-    last_bu, last_be = None, None
+    
+    last_peak = df.iloc[0]['High']
+    last_trough = df.iloc[0]['Low']
+    reaction_support = df.iloc[0]['Low']
+    reaction_resist = df.iloc[0]['High']
+    
+    last_peak_idx = 0
+    last_trough_idx = 0
     
     for i in range(1, len(df)):
-        curr = df.iloc[i]; prev = df.iloc[i-1]
-        c_h, c_l, c_c = curr['CH_TRADE_HIGH_PRICE'], curr['CH_TRADE_LOW_PRICE'], curr['CH_CLOSING_PRICE']
-        p_h, p_l = prev['CH_TRADE_HIGH_PRICE'], prev['CH_TRADE_LOW_PRICE']
-        d_str = prev['Date'].strftime('%d-%b').upper()
+        curr = df.iloc[i]
+        c_high, c_low = curr['High'], curr['Low']
+        d_str = curr['Date'].strftime('%d-%b').upper()
         
-        # ATAK
-        if last_bu and (last_bu*0.995 <= c_h <= last_bu*1.005) and c_c < last_bu:
-            df.at[i, 'BU'] = f"ATAK (Top) {c_h:.2f}"; df.at[i, 'Type'] = "warn"
-        if last_be and (last_be*0.995 <= c_l <= last_be*1.005) and c_c > last_be:
-            df.at[i, 'BE'] = f"ATAK (Bottom) {c_l:.2f}"; df.at[i, 'Type'] = "warn"
-
-        # TREND
-        if trend == "Bullish":
-            if c_l < p_l: 
-                df.at[i-1, 'BU'] = f"BU(T) {d_str} : {p_h:.2f}"; df.at[i-1, 'Type']="bull"; last_bu = p_h
-            if c_h > p_h: 
-                df.at[i-1, 'BE'] = f"R(Teji) : {p_l:.2f}"; df.at[i-1, 'Type']="info"; last_be = p_l
-        
-        elif trend == "Bearish":
-            if c_h > p_h: 
-                df.at[i-1, 'BE'] = f"BE(M) {d_str} : {p_l:.2f}"; df.at[i-1, 'Type']="bear"; last_be = p_l
-            if c_l < p_l: 
-                df.at[i-1, 'BU'] = f"R(Mandi) {d_str} : {p_h:.2f}"; df.at[i-1, 'Type']="info"; last_bu = p_h
+        # TEJI (Up)
+        if trend == "Teji":
+            if c_high > last_peak:
+                # Continuation: Higher High
+                df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_high:.2f}"
+                df.at[i, 'Type'] = "bull"
                 
-        else: # Neutral
-            if c_h > p_h: trend="Bullish"; df.at[i-1, 'BE']=f"Start Teji : {p_l:.2f}"; df.at[i-1, 'Type']="bull"; last_be=p_l
-            elif c_l < p_l: trend="Bearish"; df.at[i-1, 'BU']=f"Start Mandi : {p_h:.2f}"; df.at[i-1, 'Type']="bear"; last_bu=p_h
+                # Reaction: Lowest Low in swing
+                swing_df = df.iloc[last_peak_idx:i+1]
+                reaction_support = swing_df['Low'].min()
+                
+                df.at[i, 'BE'] = f"R (Reaction of Teji)\n{reaction_support:.2f}"
+                df.at[i, 'Type'] = "info"
+                
+                last_peak = c_high; last_peak_idx = i
+                
+            elif c_low < reaction_support:
+                # Reversal: Break Support -> Atak/Mandi
+                df.at[i, 'BU'] = f"ATAK (Top)\n{last_peak:.2f}"
+                df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_low:.2f}"
+                df.at[i, 'Type'] = "warn" # Mark breakdown row as warn/bear
+                
+                trend = "Mandi"
+                last_trough = c_low; last_trough_idx = i
+                reaction_resist = c_high
+
+        # MANDI (Down)
+        elif trend == "Mandi":
+            if c_low < last_trough:
+                # Continuation: Lower Low
+                df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_low:.2f}"
+                df.at[i, 'Type'] = "bear"
+                
+                # Reaction: Highest High in swing
+                swing_df = df.iloc[last_trough_idx:i+1]
+                reaction_resist = swing_df['High'].max()
+                
+                df.at[i, 'BU'] = f"R (Reaction of Mandi)\n{reaction_resist:.2f}"
+                df.at[i, 'Type'] = "info"
+                
+                last_trough = c_low; last_trough_idx = i
+                
+            elif c_high > reaction_resist:
+                # Reversal: Break Resist -> Atak/Teji
+                df.at[i, 'BE'] = f"ATAK (Bot)\n{last_trough:.2f}"
+                df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_high:.2f}"
+                df.at[i, 'Type'] = "warn"
+                
+                trend = "Teji"
+                last_peak = c_high; last_peak_idx = i
+                reaction_support = c_low
+
+        # NEUTRAL
+        else:
+            if c_high > last_peak:
+                trend = "Teji"; df.at[i, 'BU'] = "Start Teji"; df.at[i, 'Type']="bull"
+                last_peak=c_high; last_peak_idx=i; reaction_support=df.iloc[i-1]['Low']
+            elif c_low < last_trough:
+                trend = "Mandi"; df.at[i, 'BE'] = "Start Mandi"; df.at[i, 'Type']="bear"
+                last_trough=c_low; last_trough_idx=i; reaction_resist=df.iloc[i-1]['High']
             
-        # SWITCH
-        if trend == "Bearish" and last_bu and c_c > last_bu:
-            trend="Bullish"; df.at[i, 'BU']="BREAKOUT (Teji)"; df.at[i, 'Type']="bull"
-        if trend == "Bullish" and last_be and c_c < last_be:
-            trend="Bearish"; df.at[i, 'BE']="BREAKDOWN (Mandi)"; df.at[i, 'Type']="bear"
-            
-    return df, trend, last_bu, last_be
+    return df, trend, reaction_resist, reaction_support
 
 # --- RENDER ---
 st.title(f"📊 VNS Theory: {selected_stock}")
 st.markdown(f"Analysis: **{st.session_state.start_date.strftime('%d-%b-%Y')}** to **{st.session_state.end_date.strftime('%d-%b-%Y')}**")
 
 if run_btn:
-    with st.spinner("Fetching data from Yahoo Finance..."):
+    with st.spinner("Fetching..."):
         raw_df = fetch_data(selected_stock, st.session_state.start_date, st.session_state.end_date)
         if raw_df is not None:
-            df, final_trend, final_res, final_sup = analyze_vns(raw_df)
+            # Run logic on full data, then filter for display
+            df_full, final_trend, fin_res, fin_sup = analyze_vns(raw_df)
             
-            # --- HEADER CARDS ---
+            mask = (df_full['Date'] >= st.session_state.start_date) & (df_full['Date'] <= st.session_state.end_date)
+            df = df_full.loc[mask].copy()
+            
+            # HEADER
             c1, c2, c3, c4 = st.columns(4)
-            
-            # Helper for HTML Metrics
-            def card(label, value):
-                return f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>"""
-            
+            def card(label, value): return f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>"""
             with c1:
-                css_cls, text = "trend-neutral", "NEUTRAL"
-                if final_trend == "Bullish": css_cls, text = "trend-bull", "BULLISH (TEJI)"
-                elif final_trend == "Bearish": css_cls, text = "trend-bear", "BEARISH (MANDI)"
-                st.markdown(f"""<div class="trend-card {css_cls}"><div style="font-size:0.8rem; margin-bottom:5px; color:#444;">OVERALL TREND</div>{text}</div>""", unsafe_allow_html=True)
-            
-            with c2: st.markdown(card("Last Close", f"{df.iloc[-1]['CH_CLOSING_PRICE']:.2f}"), unsafe_allow_html=True)
-            with c3: st.markdown(card("Active Resistance", f"{final_res:.2f}" if final_res else "-"), unsafe_allow_html=True)
-            with c4: st.markdown(card("Active Support", f"{final_sup:.2f}" if final_sup else "-"), unsafe_allow_html=True)
+                cls, txt = ("trend-neutral", "NEUTRAL")
+                if final_trend == "Teji": cls, txt = ("trend-bull", "BULLISH (TEJI)")
+                elif final_trend == "Mandi": cls, txt = ("trend-bear", "BEARISH (MANDI)")
+                st.markdown(f"""<div class="trend-card {cls}"><div style="font-size:0.8rem; margin-bottom:5px;">OVERALL TREND</div>{txt}</div>""", unsafe_allow_html=True)
+            with c2: st.markdown(card("Last Close", f"{df.iloc[-1]['Close']:.2f}"), unsafe_allow_html=True)
+            with c3: st.markdown(card("Active Resist", f"{fin_res:.2f}"), unsafe_allow_html=True)
+            with c4: st.markdown(card("Active Support", f"{fin_sup:.2f}"), unsafe_allow_html=True)
             
             st.divider()
             
-            # --- TABLE ---
-            disp_df = df[['Date', 'CH_OPENING_PRICE', 'CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_CLOSING_PRICE', 'BU', 'BE', 'Type']].copy()
-            disp_df.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'BU (Resist)', 'BE (Support)', 'Type']
+            # TABLE
+            disp = df[['Date', 'Open', 'High', 'Low', 'Close', 'BU', 'BE', 'Type']].copy()
+            disp.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'BU (Teji/Resist)', 'BE (Mandi/Support)', 'Type']
             
             def color_rows(row):
                 s = row['Type']
-                if s == 'bull': return ['background-color: #C6EFCE; color: #006100; font-weight: bold'] * len(row)
-                if s == 'bear': return ['background-color: #FFC7CE; color: #9C0006; font-weight: bold'] * len(row)
-                if s == 'warn': return ['background-color: #FFEB9C; color: #9C5700; font-weight: bold'] * len(row)
-                if s == 'info': return ['background-color: #E6F3FF; color: #000; font-style: italic'] * len(row)
-                return [''] * len(row)
+                if s == 'bull': return ['background-color: #C6EFCE; color: #006100; font-weight: bold; white-space: pre-wrap;'] * len(row)
+                if s == 'bear': return ['background-color: #FFC7CE; color: #9C0006; font-weight: bold; white-space: pre-wrap;'] * len(row)
+                if s == 'warn': return ['background-color: #FFEB9C; color: #9C5700; font-weight: bold; white-space: pre-wrap;'] * len(row)
+                if s == 'info': return ['background-color: #E6F3FF; color: #000; font-style: italic; white-space: pre-wrap;'] * len(row)
+                return ['white-space: pre-wrap;'] * len(row)
 
             st.dataframe(
-                disp_df.style.apply(color_rows, axis=1).format({
+                disp.style.apply(color_rows, axis=1).format({
                     "Date": lambda t: t.strftime("%d-%b-%Y"),
                     "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}"
                 }),
-                column_config={"Type": None, "BU (Resist)": st.column_config.TextColumn(width="medium"), "BE (Support)": st.column_config.TextColumn(width="medium")},
-                use_container_width=True,
-                height=800
+                column_config={"Type": None, "BU (Teji/Resist)": st.column_config.TextColumn(width="medium"), "BE (Mandi/Support)": st.column_config.TextColumn(width="medium")},
+                use_container_width=True, height=800
             )
-        else: st.error("⚠️ Data Error. Could not fetch data from Yahoo Finance. Please check your internet or try again later.")
+        else: st.error("⚠️ Data Error.")
 else: st.info("👈 Click RUN")
