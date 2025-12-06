@@ -78,12 +78,16 @@ st.markdown("""
     /* Sidebar text fix */
     .stSidebar label { color: #333 !important; }
     div[data-testid="stDialog"] { width: 85vw; } 
+    
+    /* Table Fix */
+    .stDataFrame td { white-space: pre-wrap !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- CONFIGURATION ---
 CLASS_FILE = "daily_classification_results.json" 
 
+# --- SECTOR MAPPING (180 Stocks) ---
 SECTOR_MAP = {
     "NIFTY": "Index", "BANKNIFTY": "Index",
     "RELIANCE": "Energy", "ONGC": "Energy", "COALINDIA": "Energy", "NTPC": "Energy", "POWERGRID": "Energy", "TATAPOWER": "Energy", "ADANIGREEN": "Energy", "ADANIENSOL": "Energy", "IOC": "Energy", "BPCL": "Energy", "GAIL": "Energy", "PETRONET": "Energy", "OIL": "Energy",
@@ -123,9 +127,8 @@ def update_class_settings():
 # --- SIDEBAR CONTROLS ---
 with st.sidebar:
     st.header("⚙️ Settings")
-    
-    # 1. Period
     st.subheader("1. Analysis Period")
+    st.info("Changing Period triggers a new scan.")
     period_sel = st.radio("Duration", ["1M", "2M", "3M", "6M", "1Y", "Custom"], index=2, horizontal=True, key="class_duration_select", on_change=update_class_settings)
     
     if period_sel == "Custom":
@@ -136,7 +139,6 @@ with st.sidebar:
     
     st.divider()
     
-    # 2. View Filters
     st.subheader("2. View Filters")
     c1, c2 = st.columns(2)
     view_min = c1.number_input("Min Price", 0, value=1000, step=100) 
@@ -151,160 +153,124 @@ with st.sidebar:
 # --- CORE LOGIC ---
 def fetch_stock_data(symbol, start_date):
     try:
-        yf_symbol = f"{symbol}.NS"
-        # Fetch extra data to ensure calculations work correctly
-        req_start = start_date - timedelta(days=60)
-        df = yf.download(yf_symbol, start=req_start, progress=False, auto_adjust=False)
-        
-        if df.empty: return None
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        df = df.reset_index()
-        df = df.rename(columns={'Date': 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close'})
-        df['Date'] = pd.to_datetime(df['Date'])
-        return df.sort_values('Date').reset_index(drop=True)
+        safe_symbol = urllib.parse.quote(symbol)
+        end = datetime.now()
+        req_start = start_date - timedelta(days=5)
+        headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
+        s = requests.Session(); s.headers.update(headers); s.get("https://www.nseindia.com", timeout=3)
+        url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={req_start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={safe_symbol}&type=priceVolumeDeliverable&series=ALL"
+        r = s.get(url, timeout=5)
+        if r.status_code == 200:
+            df = pd.DataFrame(r.json().get('data', []))
+            if df.empty: return None
+            df = df[df['CH_SERIES'] == 'EQ']
+            df['Date'] = pd.to_datetime(df['mTIMESTAMP'])
+            for c in ['CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_OPENING_PRICE', 'CH_CLOSING_PRICE', 'CH_PREVIOUS_CLS_PRICE']: 
+                df[c] = df[c].astype(float)
+            return df.sort_values('Date').reset_index(drop=True)
     except: return None
+    return None
 
 def classify_stock(df):
-    trend = "Neutral"; last_peak = df.iloc[0]['High']; last_trough = df.iloc[0]['Low']
-    reaction_support = df.iloc[0]['Low']; reaction_resist = df.iloc[0]['High']
+    trend = "Neutral"; last_peak = df.iloc[0]['CH_TRADE_HIGH_PRICE']; last_trough = df.iloc[0]['CH_TRADE_LOW_PRICE']
+    reaction_support = df.iloc[0]['CH_TRADE_LOW_PRICE']; reaction_resist = df.iloc[0]['CH_TRADE_HIGH_PRICE']
     last_peak_idx=0; last_trough_idx=0
     signal_desc = "Neutral"; category = "Neutral"; history_records = []
     
     for i in range(1, len(df)):
-        row = df.iloc[i]; prev = df.iloc[i-1]
-        c_h, c_l, c_c = row['High'], row['Low'], row['Close']
+        curr = df.iloc[i]; c_h, c_l = curr['CH_TRADE_HIGH_PRICE'], curr['CH_TRADE_LOW_PRICE']
+        bu, be, signal, signal_type = None, None, "", ""
         
-        low_broken = c_l < reaction_support
-        high_broken = c_h > reaction_resist
-        
-        current_signal = ""; bu_val, be_val = None, None; signal_type = ""
-        
+        # TEJI (Up)
         if trend == "Teji":
             if c_h > last_peak:
-                bu_val = c_h; current_signal = "New High"; signal_type="bull_dark"
-                
-                # Reaction Logic
-                swing = df.iloc[last_peak_idx:i+1]
-                reaction_support = swing['Low'].min()
-                be_val = reaction_support # Light Green Support
-                
+                bu = f"T (Teji)\n{c_h:.2f}"; signal_type="bull_dark"; signal="New High"
+                swing = df.iloc[last_peak_idx:i+1]; reaction_support = swing['CH_TRADE_LOW_PRICE'].min()
+                be = f"R (Sup)\n{reaction_support:.2f}"
                 last_peak = c_h; last_peak_idx = i
-                
             elif c_l < reaction_support:
-                bu_val = last_peak # Light Red (Atak Top)
-                current_signal = "Reversal (Mandi)"
-                signal_type="bear_dark" # Dark Red Row
-                
-                trend = "Mandi"
-                be_val = c_l
-                last_trough = c_l; last_trough_idx = i
-                reaction_resist = c_h
+                bu = f"ATAK (Top)\n{last_peak:.2f}"; be = f"M (Mandi)\n{c_l:.2f}"; signal_type="bear_dark"; signal="Reversal"
+                trend = "Mandi"; last_trough = c_l; last_trough_idx = i; reaction_resist = c_h
 
+        # MANDI (Down)
         elif trend == "Mandi":
             if c_l < last_trough:
-                be_val = c_l; current_signal = "New Low"; signal_type="bear_dark"
-                
-                swing = df.iloc[last_trough_idx:i+1]
-                reaction_resist = swing['High'].max()
-                bu_val = reaction_resist # Light Red Resist
-                
+                be = f"M (Mandi)\n{c_l:.2f}"; signal_type="bear_dark"; signal="New Low"
+                swing = df.iloc[last_trough_idx:i+1]; reaction_resist = swing['CH_TRADE_HIGH_PRICE'].max()
+                bu = f"R (Resist)\n{reaction_resist:.2f}"
                 last_trough = c_l; last_trough_idx = i
-                
             elif c_h > reaction_resist:
-                be_val = last_trough # Light Green (Atak Bot)
-                current_signal = "Reversal (Teji)"
-                signal_type="bull_dark" # Dark Green Row
-                
-                trend = "Teji"
-                bu_val = c_h
-                last_peak = c_h; last_peak_idx = i
-                reaction_support = c_l
-                
-        else:
-            if c_h > last_peak: trend="Teji"; bu_val=c_h; signal_type="bull_dark"; current_signal="Start Teji"; last_peak=c_h; last_peak_idx=i
-            elif c_l < last_trough: trend="Mandi"; be_val=c_l; signal_type="bear_dark"; current_signal="Start Mandi"; last_trough=c_l; last_trough_idx=i
-
-        # COLOR MAPPING LOGIC FOR POPUP
-        color_type = ""
-        if signal_type == "bull_dark": color_type = "bull_dark"
-        elif signal_type == "bear_dark": color_type = "bear_dark"
-        # Reaction Lines (Same trend, but marking levels)
-        elif trend == "Teji" and be_val and "Reversal" not in current_signal: color_type = "bull_light"
-        elif trend == "Mandi" and bu_val and "Reversal" not in current_signal: color_type = "bear_light"
-        # Atak/Reversal Lines
-        if "ATAK" in str(bu_val): color_type = "bear_light"
-        if "ATAK" in str(be_val): color_type = "bull_light"
+                be = f"ATAK (Bot)\n{last_trough:.2f}"; bu = f"T (Teji)\n{c_h:.2f}"; signal_type="bull_dark"; signal="Reversal"
+                trend = "Teji"; last_peak = c_h; last_peak_idx = i; reaction_support = c_l
         
+        # NEUTRAL
+        else:
+            if c_h > last_peak: trend="Teji"; bu="Start Teji"; signal_type="bull_dark"; last_peak=c_h; last_peak_idx=i
+            elif c_l < last_trough: trend="Mandi"; be="Start Mandi"; signal_type="bear_dark"; last_trough=c_l; last_trough_idx=i
+
+        # Map Color Types for History
+        color_type = ""
+        if "T (Teji)" in str(bu) or "Start Teji" in str(bu): color_type = "bull_dark"
+        elif "M (Mandi)" in str(be) or "Start Mandi" in str(be): color_type = "bear_dark"
+        elif "ATAK (Top)" in str(bu) or "R (Resist)" in str(bu): color_type = "bear_light"
+        elif "ATAK (Bot)" in str(be) or "R (Sup)" in str(be): color_type = "bull_light"
+
         history_records.append({
-            'Date': row['Date'].strftime('%d-%b-%Y'), 'Open': row['Open'], 'High': row['High'],
-            'Low': row['Low'], 'Close': row['Close'], 'BU': bu_val, 'BE': be_val, 'Signal': current_signal, 'Type': color_type
+            'Date': curr['Date'].strftime('%d-%b-%Y'), 'Open': curr['CH_OPENING_PRICE'], 'High': curr['CH_TRADE_HIGH_PRICE'],
+            'Low': curr['CH_TRADE_LOW_PRICE'], 'Close': curr['CH_CLOSING_PRICE'], 'BU': bu, 'BE': be, 'Signal': signal, 'Type': color_type
         })
         
         if i == len(df) - 1:
-            signal_desc = current_signal
-            if "Reversal" in current_signal and trend == "Teji": category = "Highly Bullish"
-            elif "Reversal" in current_signal and trend == "Mandi": category = "Highly Bearish"
+            signal_desc = signal
+            if "Reversal" in signal and trend == "Teji": category = "Highly Bullish"
+            elif "Reversal" in signal and trend == "Mandi": category = "Highly Bearish"
             elif trend == "Teji": category = "Bullish"
             elif trend == "Mandi": category = "Bearish"
             
-            # Check Atak conditions explicitly
-            if last_bu and (last_bu*0.995 <= c_h <= last_bu*1.005) and c_c < last_bu: category = "Atak (Teji Side)"
-            if last_be and (last_be*0.995 <= c_l <= last_be*1.005) and c_c > last_be: category = "Atak (Mandi Side)"
+            if last_bu and (last_bu*0.995 <= c_h <= last_bu*1.005) and curr['CH_CLOSING_PRICE'] < last_bu: category = "Atak (Teji Side)"
+            if last_be and (last_be*0.995 <= c_l <= last_be*1.005) and curr['CH_CLOSING_PRICE'] > last_be: category = "Atak (Mandi Side)"
 
     last_row = df.iloc[-1]
-    pct_change = ((last_row['Close'] - last_row['Open']) / last_row['Open']) * 100 # Approx day change
+    pct_change = ((last_row['CH_CLOSING_PRICE'] - last_row['CH_PREVIOUS_CLS_PRICE']) / last_row['CH_PREVIOUS_CLS_PRICE']) * 100
     
-    return category, signal_desc, last_row['Close'], pct_change, history_records, last_bu, last_be, trend
+    return category, signal_desc, last_row['CH_CLOSING_PRICE'], pct_change, history_records, last_bu, last_be, trend
 
 def run_full_scan():
     results = []; bar = st.progress(0); status = st.empty()
-    start_date = st.session_state.class_start_date; duration_used = st.session_state.class_duration_label
+    start_date = st.session_state.class_start_date; dur = st.session_state.class_duration_label
     
     for i, stock in enumerate(FNO_STOCKS_LIST):
         status.caption(f"Scanning {stock}...")
         df = fetch_stock_data(stock, start_date)
-        
-        if df is not None and not df.empty:
+        if df is not None:
             cat, sig, close, chg, history, fin_bu, fin_be, fin_trend = classify_stock(df)
             if close > 0: 
                 sec = SECTOR_MAP.get(stock, "Other")
                 results.append({ "Symbol": stock, "Sector": sec, "Price": close, "Change": chg, "Category": cat, "Signal": sig, "History": history, "BU": fin_bu, "BE": fin_be, "Trend": fin_trend })
-        
-        bar.progress((i + 1) / len(FNO_STOCKS_LIST))
-        time.sleep(0.05) 
-        
+        bar.progress((i + 1) / len(FNO_STOCKS_LIST)); time.sleep(0.1) 
     bar.empty(); status.empty()
-    
-    save_payload = {
-        "date": datetime.now().strftime("%Y-%m-%d"),
-        "last_updated": datetime.now().strftime("%H:%M:%S"),
-        "duration_label": duration_used,
-        "stocks": results
-    }
-    with open(CLASS_FILE, 'w') as f: json.dump(save_payload, f)
-    
-    return save_payload
+    save = { "date": datetime.now().strftime("%Y-%m-%d"), "last_updated": datetime.now().strftime("%H:%M:%S"), "duration_label": dur, "stocks": results }
+    with open(CLASS_FILE, 'w') as f: json.dump(save, f)
+    return save
 
 def check_auto_scan():
-    now = datetime.now(); today_str = now.strftime("%Y-%m-%d")
-    if not os.path.exists(CLASS_FILE): return True, "Initial Setup"
+    now = datetime.now(); today = now.strftime("%Y-%m-%d")
+    if not os.path.exists(CLASS_FILE): return True, "Init"
     try:
         with open(CLASS_FILE, 'r') as f: data = json.load(f)
-        if data.get("date") != today_str and now.hour >= 18: return True, "Daily Update"
-        if data.get("duration_label") != st.session_state.class_duration_label: return True, "Duration Change"
+        if data.get("date") != today and now.hour >= 18: return True, "Daily"
+        if data.get("duration_label") != st.session_state.class_duration_label: return True, "Dur"
         if data.get('stocks') and len(data['stocks']) > 0:
-             if 'Trend' not in data['stocks'][0]: return True, "Schema Update"
+             if 'Trend' not in data['stocks'][0]: return True, "Schema"
         return False, data
     except: return True, "Error"
 
-# --- CONTROLLER ---
 should_scan, payload = check_auto_scan()
-
-if force_scan: st.toast("Forcing Scan..."); current_data = run_full_scan(); st.rerun()
-elif should_scan is True: st.info(f"📅 Running Auto-Scan ({payload})..."); current_data = run_full_scan(); st.rerun()
+if force_scan: st.toast("Scanning..."); current_data = run_full_scan(); st.rerun()
+elif should_scan is True: st.info("Auto-Scanning..."); current_data = run_full_scan(); st.rerun()
 else: current_data = payload
 
-# --- POPUP DIALOG ---
+# --- POPUP ---
 @st.dialog("Stock Analysis", width="large")
 def show_details(item):
     st.subheader(f"{item['Symbol']} : ₹{item['Price']:.2f} ({item['Change']:.2f}%)")
@@ -313,7 +279,7 @@ def show_details(item):
     def card(label, value): return f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>"""
     with c1: st.markdown(card("Trend", item['Trend']), unsafe_allow_html=True)
     
-    # Fix None values for display
+    # Handle None
     bu_disp = f"{item['BU']:.2f}" if item['BU'] else "-"
     be_disp = f"{item['BE']:.2f}" if item['BE'] else "-"
     
@@ -324,21 +290,24 @@ def show_details(item):
     
     def color_rows(row):
         s = row['Type']
-        # EXACT MATCH WITH HOME.PY COLORS
-        if s == 'bull_dark': return ['background-color: #28a745; color: white; font-weight: bold']*len(row) # Dark Green
-        if s == 'bear_dark': return ['background-color: #dc3545; color: white; font-weight: bold']*len(row) # Dark Red
-        if s == 'bull_light': return ['background-color: #d4edda; color: #155724; font-weight: bold']*len(row) # Light Green
-        if s == 'bear_light': return ['background-color: #f8d7da; color: #721c24; font-weight: bold']*len(row) # Light Red
-        return ['']*len(row)
+        # EXACT MATCH WITH HOME.PY
+        if s == 'bull_dark': return ['background-color: #228B22; color: white; font-weight: bold; white-space: pre-wrap;']*len(row)
+        if s == 'bear_dark': return ['background-color: #8B0000; color: white; font-weight: bold; white-space: pre-wrap;']*len(row)
+        if s == 'bull_light': return ['background-color: #90EE90; color: black; font-weight: bold; white-space: pre-wrap;']*len(row)
+        if s == 'bear_light': return ['background-color: #FFC0CB; color: black; font-weight: bold; white-space: pre-wrap;']*len(row)
+        return ['white-space: pre-wrap;']*len(row)
 
     hist_df = pd.DataFrame(item['History'])
     if not hist_df.empty:
+        # Convert numeric cols just in case, but keep BU/BE as objects/strings
+        for c in ["Open", "High", "Low", "Close"]: hist_df[c] = pd.to_numeric(hist_df[c])
+        
         st.dataframe(
-            hist_df.style.apply(color_rows, axis=1).format({"Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}"}, na_rep=""),
+            hist_df.style.apply(color_rows, axis=1).format({"Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}"}),
             column_config={
                 "Type": None,
-                "BU": st.column_config.NumberColumn("BU (Resist)", format="%.2f"),
-                "BE": st.column_config.NumberColumn("BE (Support)", format="%.2f")
+                "BU": st.column_config.TextColumn("BU (Resist)", width="medium"), # Use TextColumn for strings
+                "BE": st.column_config.TextColumn("BE (Support)", width="medium")  # Use TextColumn for strings
             }, 
             use_container_width=True, 
             height=400
@@ -346,23 +315,18 @@ def show_details(item):
     else:
         st.write("No history data available.")
 
-# --- DISPLAY ---
 if current_data:
     data_dur = current_data.get('duration_label', 'Unknown')
     st.caption(f"Last Scanned: {current_data['date']} {current_data['last_updated']} | Duration: {data_dur}")
-    
-    if data_dur != st.session_state.class_duration_label: st.warning(f"⚠️ Displaying **{data_dur}** data. You selected **{st.session_state.class_duration_label}**. Click Force Refresh.")
-    
     st.divider()
+    
     search_query = st.text_input("🔍 Search Stock", placeholder="e.g. RELIANCE").upper()
     data = current_data['stocks']
-    
-    # Filters
     data = [d for d in data if view_min <= d['Price'] <= view_max]
+    
     if sector_filter != "All": data = [d for d in data if d.get('Sector') == sector_filter]
     if search_query: data = [d for d in data if search_query in d['Symbol']]
         
-    # Buckets
     high_bull = [d for d in data if d['Category'] == "Highly Bullish"]
     bull = [d for d in data if d['Category'] == "Bullish"]
     high_bear = [d for d in data if d['Category'] == "Highly Bearish"]
@@ -386,23 +350,8 @@ if current_data:
                 chg_color = "chg-green" if item['Change'] >= 0 else "chg-red"
                 sign = "+" if item['Change'] >= 0 else ""
                 tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{item['Symbol']}"
-                
-                st.markdown(f"""
-                <div class="class-card {border_class}">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span class="stock-title">{item['Symbol']} <span style='font-size:0.8em; color:#999; font-weight:normal;'>({item['Sector']})</span></span>
-                        <span class="stock-price">₹{item['Price']:.2f}</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
-                        <span class="{chg_color}">{sign}{item['Change']:.2f}%</span>
-                        <a href="{tv_link}" target="_blank" class="chart-link">📈 Chart</a>
-                    </div>
-                    <div class="signal-text">Signal: {item['Signal']}</div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if st.button(f"🔍 View {item['Symbol']}", key=f"btn_{item['Symbol']}", use_container_width=True):
-                    show_details(item)
+                st.markdown(f"""<div class="class-card {border_class}"><div style="display:flex; justify-content:space-between; align-items:center;"><span class="stock-title">{item['Symbol']} <span style='font-size:0.8em; color:#999; font-weight:normal;'>({item['Sector']})</span></span><span class="stock-price">₹{item['Price']:.2f}</span></div><div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;"><span class="{chg_color}">{sign}{item['Change']:.2f}%</span><a href="{tv_link}" target="_blank" class="chart-link">📈 Chart</a></div><div class="signal-text">Signal: {item['Signal']}</div></div>""", unsafe_allow_html=True)
+                if st.button(f"🔍 View {item['Symbol']}", key=f"btn_{item['Symbol']}", use_container_width=True): show_details(item)
 
     if category_filter == "All":
         c1, c2, c3 = st.columns(3)
@@ -410,4 +359,4 @@ if current_data:
         with c2: render_category(cats_to_show[1][0], cats_to_show[1][1], cats_to_show[1][2]); render_category(cats_to_show[4][0], cats_to_show[4][1], cats_to_show[4][2])
         with c3: render_category(cats_to_show[2][0], cats_to_show[2][1], cats_to_show[2][2]); render_category(cats_to_show[5][0], cats_to_show[5][1], cats_to_show[5][2])
     else:
-        for cat in cats_to_show: render_category(cat[0], cat[1], cat[2])  
+        for cat in cats_to_show: render_category(cat[0], cat[1], cat[2])
