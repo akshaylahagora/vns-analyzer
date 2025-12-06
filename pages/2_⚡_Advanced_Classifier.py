@@ -410,4 +410,4 @@ if current_data:
         with c2: render_category(cats_to_show[1][0], cats_to_show[1][1], cats_to_show[1][2]); render_category(cats_to_show[4][0], cats_to_show[4][1], cats_to_show[4][2])
         with c3: render_category(cats_to_show[2][0], cats_to_show[2][1], cats_to_show[2][2]); render_category(cats_to_show[5][0], cats_to_show[5][1], cats_to_show[5][2])
     else:
-        for cat in cats_to_show: render_category(cat[0], cat[1], cat[2])
+        for cat in cats_to_show: render_category(cat[0], cat[1], cat[2])  
