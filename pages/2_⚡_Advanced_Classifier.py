@@ -5,6 +5,7 @@ import urllib.parse
 import time
 import json
 import os
+import yfinance as yf
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIG ---
@@ -16,14 +17,9 @@ st.markdown("Identifies **Breakouts**, **Trend Continuation**, and **Reversal Ri
 # --- PRO CSS ---
 st.markdown("""
 <style>
-    /* Force Light Mode */
     .stApp { background-color: white; color: black; }
+    div[data-testid="stMetricValue"], div[data-testid="stMetricLabel"] { color: #000000 !important; }
     
-    /* VISIBILITY FIXES */
-    div[data-testid="stMetricValue"] { color: #000000 !important; }
-    div[data-testid="stMetricLabel"] { color: #444444 !important; }
-    
-    /* MODAL METRIC CARDS */
     .metric-card {
         background-color: #f8f9fa;
         border: 1px solid #e0e0e0;
@@ -35,7 +31,6 @@ st.markdown("""
     .metric-label { font-size: 0.8rem; font-weight: 600; color: #666; text-transform: uppercase; margin-bottom: 4px; }
     .metric-value { font-size: 1.2rem; font-weight: 800; color: #000; }
     
-    /* CARD DESIGN */
     .class-card {
         background-color: #ffffff;
         padding: 15px;
@@ -51,16 +46,13 @@ st.markdown("""
     }
     .class-card:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
     
-    /* TEXT STYLES */
     .stock-title { font-size: 1.2rem; font-weight: 800; color: #2c3e50 !important; }
     .stock-price { font-size: 1.1rem; font-weight: 600; color: #333 !important; }
     .signal-text { font-size: 0.9rem; font-weight: 600; margin-top: 5px; color: #555 !important; }
     
-    /* CHANGE BADGES */
     .chg-green { color: #008000 !important; font-weight: bold; font-size: 0.9rem; }
     .chg-red { color: #d63031 !important; font-weight: bold; font-size: 0.9rem; }
     
-    /* BORDER COLORS */
     .b-high-bull { border-left-color: #00b894; } 
     .b-bull { border-left-color: #55efc4; }      
     .b-high-bear { border-left-color: #d63031; } 
@@ -68,12 +60,11 @@ st.markdown("""
     .b-atak-top { border-left-color: #e17055; }  
     .b-atak-bot { border-left-color: #fdcb6e; }  
     
-    /* LINK BUTTON */
     .chart-link {
         text-decoration: none; font-size: 0.8rem; color: #0984e3 !important; font-weight: bold; float: right;
     }
+    .chart-link:hover { text-decoration: underline; }
     
-    /* SIDEBAR */
     .stSidebar label { color: #333 !important; }
     div[data-testid="stDialog"] { width: 85vw; } 
 </style>
@@ -82,7 +73,6 @@ st.markdown("""
 # --- CONFIGURATION ---
 CLASS_FILE = "daily_classification_results.json" 
 
-# --- SECTOR MAPPING (180 Stocks) ---
 SECTOR_MAP = {
     "NIFTY": "Index", "BANKNIFTY": "Index",
     "RELIANCE": "Energy", "ONGC": "Energy", "COALINDIA": "Energy", "NTPC": "Energy", "POWERGRID": "Energy", "TATAPOWER": "Energy", "ADANIGREEN": "Energy", "ADANIENSOL": "Energy", "IOC": "Energy", "BPCL": "Energy", "GAIL": "Energy", "PETRONET": "Energy", "OIL": "Energy",
@@ -122,8 +112,6 @@ def update_class_settings():
 # --- SIDEBAR CONTROLS ---
 with st.sidebar:
     st.header("⚙️ Settings")
-    
-    # 1. Period (SCAN TRIGGER)
     st.subheader("1. Analysis Period")
     st.info("Changing Period triggers a new scan.")
     period_sel = st.radio("Duration", ["1M", "2M", "3M", "6M", "1Y", "Custom"], index=2, horizontal=True, key="class_duration_select", on_change=update_class_settings)
@@ -135,46 +123,27 @@ with st.sidebar:
             st.session_state.custom_date_range = c_dates
     
     st.divider()
-    
-    # 2. View Filters (INSTANT)
-    st.subheader("2. View Filters (No Re-Scan)")
-    
-    # SECTOR FILTER
-    unique_sectors = sorted(list(set(SECTOR_MAP.values())))
-    sector_filter = st.selectbox("Sector", ["All"] + unique_sectors)
-    
-    # PRICE FILTER
+    st.subheader("2. View Filters")
     c1, c2 = st.columns(2)
     view_min = c1.number_input("Min Price", 0, value=1000, step=100) 
     view_max = c2.number_input("Max Price", 0, value=100000, step=500)
-    
-    # CATEGORY FILTER
     category_filter = st.selectbox("Category", ["All", "Bullish Only", "Bearish Only", "Atak Only", "High Momentum Only"])
-    
+    sector_filter = st.selectbox("Sector", ["All"] + sorted(list(set(SECTOR_MAP.values()))))
     st.divider()
     force_scan = st.button("🔄 Force Refresh Now", type="primary", use_container_width=True)
 
-# --- CORE LOGIC ---
+# --- CORE LOGIC (YAHOO FINANCE) ---
 def fetch_stock_data(symbol, start_date):
     try:
-        safe_symbol = urllib.parse.quote(symbol)
-        end = datetime.now()
-        req_start = start_date - timedelta(days=5)
-        headers = { "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/" }
-        s = requests.Session(); s.headers.update(headers)
-        s.get("https://www.nseindia.com", timeout=3)
-        url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={req_start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={safe_symbol}&type=priceVolumeDeliverable&series=ALL"
-        r = s.get(url, timeout=5)
-        if r.status_code == 200:
-            df = pd.DataFrame(r.json().get('data', []))
-            if df.empty: return None
-            df = df[df['CH_SERIES'] == 'EQ']
-            df['Date'] = pd.to_datetime(df['mTIMESTAMP'])
-            for c in ['CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_OPENING_PRICE', 'CH_CLOSING_PRICE', 'CH_PREVIOUS_CLS_PRICE']: 
-                df[c] = df[c].astype(float)
-            return df.sort_values('Date').reset_index(drop=True)
+        yf_symbol = f"{symbol}.NS"
+        df = yf.download(yf_symbol, start=start_date, progress=False)
+        if df.empty: return None
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        df = df.reset_index()
+        df = df.rename(columns={'Date': 'Date', 'Open': 'CH_OPENING_PRICE', 'High': 'CH_TRADE_HIGH_PRICE', 'Low': 'CH_TRADE_LOW_PRICE', 'Close': 'CH_CLOSING_PRICE'})
+        df['Date'] = pd.to_datetime(df['Date'])
+        return df.sort_values('Date').reset_index(drop=True)
     except: return None
-    return None
 
 def classify_stock(df):
     trend = "Neutral"; last_bu = None; last_be = None; signal_desc = "Neutral"; category = "Neutral"
@@ -207,10 +176,8 @@ def classify_stock(df):
         if trend == "Bullish" and last_be and c_c < last_be: trend = "Bearish"; current_signal = "BREAKDOWN (Fresh Mandi)"; be_val=None; signal_type="bear"
             
         history_records.append({
-            'Date': row['Date'].strftime('%d-%b-%Y'),
-            'Open': row['CH_OPENING_PRICE'], 'High': row['CH_TRADE_HIGH_PRICE'],
-            'Low': row['CH_TRADE_LOW_PRICE'], 'Close': row['CH_CLOSING_PRICE'],
-            'BU': bu_val, 'BE': be_val, 'Signal': current_signal, 'Type': signal_type
+            'Date': row['Date'].strftime('%d-%b-%Y'), 'Open': row['CH_OPENING_PRICE'], 'High': row['CH_TRADE_HIGH_PRICE'],
+            'Low': row['CH_TRADE_LOW_PRICE'], 'Close': row['CH_CLOSING_PRICE'], 'BU': bu_val, 'BE': be_val, 'Signal': current_signal, 'Type': signal_type
         })
 
         if i == len(df) - 1:
@@ -222,9 +189,14 @@ def classify_stock(df):
             elif trend == "Bullish": category = "Bullish"
             elif trend == "Bearish": category = "Bearish"
 
-    last = df.iloc[-1]
-    pct = ((last['CH_CLOSING_PRICE'] - last['CH_PREVIOUS_CLS_PRICE']) / last['CH_PREVIOUS_CLS_PRICE']) * 100
-    return category, signal_desc, last['CH_CLOSING_PRICE'], pct, history_records, last_bu, last_be, trend
+    # Calc % Change manually since we rely on rows now
+    if len(df) >= 2:
+        last = df.iloc[-1]; prev = df.iloc[-2]
+        pct = ((last['CH_CLOSING_PRICE'] - prev['CH_CLOSING_PRICE']) / prev['CH_CLOSING_PRICE']) * 100
+    else:
+        pct = 0.0
+        
+    return category, signal_desc, df.iloc[-1]['CH_CLOSING_PRICE'], pct, history_records, last_bu, last_be, trend
 
 def run_full_scan():
     results = []; bar = st.progress(0); status = st.empty()
@@ -234,12 +206,12 @@ def run_full_scan():
     for i, stock in enumerate(FNO_STOCKS_LIST):
         status.caption(f"Scanning {stock}...")
         df = fetch_stock_data(stock, start_date)
-        if df is not None:
+        if df is not None and not df.empty:
             cat, sig, close, chg, history, fin_bu, fin_be, fin_trend = classify_stock(df)
             if close > 0: 
                 sec = SECTOR_MAP.get(stock, "Other")
                 results.append({ "Symbol": stock, "Sector": sec, "Price": close, "Change": chg, "Category": cat, "Signal": sig, "History": history, "BU": fin_bu, "BE": fin_be, "Trend": fin_trend })
-        bar.progress((i + 1) / len(FNO_STOCKS_LIST)); time.sleep(0.1) 
+        bar.progress((i + 1) / len(FNO_STOCKS_LIST)); time.sleep(0.05) 
         
     bar.empty(); status.empty()
     save_payload = { "date": datetime.now().strftime("%Y-%m-%d"), "last_updated": datetime.now().strftime("%H:%M:%S"), "duration_label": duration_used, "stocks": results }
@@ -253,7 +225,6 @@ def check_auto_scan():
         with open(CLASS_FILE, 'r') as f: data = json.load(f)
         if data.get("date") != today_str and now.hour >= 18: return True, "Daily Update"
         if data.get("duration_label") != st.session_state.class_duration_label: return True, "Duration Change"
-        # SCHEMA CHECK: Verify new fields (Sector) exist
         if data.get('stocks') and len(data['stocks']) > 0:
             if 'Sector' not in data['stocks'][0]: return True, "Schema Update"
         return False, data
@@ -292,14 +263,10 @@ if current_data:
     data_dur = current_data.get('duration_label', 'Unknown')
     st.caption(f"Last Scanned: {current_data['date']} {current_data['last_updated']} | Duration: {data_dur}")
     st.divider()
-    
     search_query = st.text_input("🔍 Search Stock", placeholder="e.g. RELIANCE").upper()
     data = current_data['stocks']
-    
     data = [d for d in data if view_min <= d['Price'] <= view_max]
-    
     if sector_filter != "All": data = [d for d in data if d.get('Sector') == sector_filter]
-    
     if search_query: data = [d for d in data if search_query in d['Symbol']]
         
     high_bull = [d for d in data if d['Category'] == "Highly Bullish"]
