@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
-import requests
-import urllib.parse
-import time
+import yfinance as yf
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIG ---
@@ -14,10 +12,18 @@ st.markdown("""
     /* Force Light Mode */
     .stApp { background-color: white; color: black; }
     
-    /* VISIBILITY FIXES */
-    div[data-testid="stMetricValue"] { color: #000000 !important; font-size: 1.6rem !important; font-weight: 700 !important; }
-    div[data-testid="stMetricLabel"] { color: #444444 !important; font-weight: 600 !important; }
-    
+    /* CUSTOM METRIC CARDS */
+    .metric-card {
+        background-color: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 15px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .metric-label { font-size: 0.9rem; font-weight: 600; color: #666; margin-bottom: 5px; text-transform: uppercase; }
+    .metric-value { font-size: 1.5rem; font-weight: 800; color: #000; }
+
     /* TREND BADGES */
     .trend-card { padding: 15px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 1.2rem; border: 2px solid transparent; }
     .trend-bull { background-color: #d1e7dd; color: #0f5132; border-color: #badbcc; }
@@ -26,19 +32,7 @@ st.markdown("""
 
     /* TABLE TEXT SIZE */
     .stDataFrame { font-size: 1.1rem; }
-    
-    /* SIDEBAR TEXT */
     .stSidebar label { color: #333 !important; }
-    
-    /* METRIC CARD CONTAINER */
-    .metric-container {
-        background-color: #f8f9fa;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 15px;
-        text-align: center;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -94,50 +88,44 @@ with st.sidebar:
     st.divider()
     run_btn = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
-# --- ROBUST DATA FETCHING (STEALTH MODE) ---
+# --- ROBUST DATA FETCHING (VIA YFINANCE) ---
 @st.cache_data(ttl=300)
 def fetch_data(symbol, start, end):
     try:
-        # 1. Handle Special Chars (M&M -> M%26M)
-        safe_symbol = urllib.parse.quote(symbol)
+        # Convert to Yahoo Finance format (e.g., RELIANCE -> RELIANCE.NS)
+        yf_symbol = f"{symbol}.NS"
         
-        # 2. Setup Session with Browser Headers
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": f"https://www.nseindia.com/get-quotes/equity?symbol={safe_symbol}"
+        # Fetch Data
+        df = yf.download(yf_symbol, start=start, end=end + timedelta(days=1), progress=False)
+        
+        if df.empty:
+            return None
+            
+        # Flatten MultiIndex columns if present (common in new yfinance versions)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
+        # Reset index to get Date as a column
+        df = df.reset_index()
+        
+        # Rename columns to match VNS Logic
+        df = df.rename(columns={
+            'Date': 'Date',
+            'Open': 'CH_OPENING_PRICE',
+            'High': 'CH_TRADE_HIGH_PRICE',
+            'Low': 'CH_TRADE_LOW_PRICE',
+            'Close': 'CH_CLOSING_PRICE'
         })
         
-        # 3. Initial Request to set Cookies (Essential)
-        session.get("https://www.nseindia.com", timeout=10)
+        # Ensure correct types
+        df['Date'] = pd.to_datetime(df['Date'])
+        for c in ['CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_OPENING_PRICE', 'CH_CLOSING_PRICE']:
+            df[c] = df[c].astype(float)
+            
+        return df.sort_values('Date').reset_index(drop=True)
         
-        # 4. The actual API call
-        url = f"https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from={start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}&symbol={safe_symbol}&type=priceVolumeDeliverable&series=ALL"
-        response = session.get(url, timeout=15)
-        
-        if response.status_code == 200:
-            json_data = response.json()
-            
-            # Check if NSE returned data wrapper
-            if 'data' not in json_data: return None
-            
-            df = pd.DataFrame(json_data['data'])
-            if df.empty: return None
-            
-            # Filter and Clean
-            df = df[df['CH_SERIES'] == 'EQ']
-            df['Date'] = pd.to_datetime(df['mTIMESTAMP'])
-            for c in ['CH_TRADE_HIGH_PRICE', 'CH_TRADE_LOW_PRICE', 'CH_OPENING_PRICE', 'CH_CLOSING_PRICE']:
-                df[c] = df[c].astype(float)
-                
-            return df.sort_values('Date').reset_index(drop=True)
-            
     except Exception as e:
-        # st.error(f"Connection Error: {e}") # Uncomment for debugging
         return None
-    return None
 
 # --- LOGIC ---
 def analyze_vns(df):
@@ -153,26 +141,26 @@ def analyze_vns(df):
         
         # ATAK
         if last_bu and (last_bu*0.995 <= c_h <= last_bu*1.005) and c_c < last_bu:
-            df.at[i, 'BU'] = f"ATAK (Top) {c_h}"; df.at[i, 'Type'] = "warn"
+            df.at[i, 'BU'] = f"ATAK (Top) {c_h:.2f}"; df.at[i, 'Type'] = "warn"
         if last_be and (last_be*0.995 <= c_l <= last_be*1.005) and c_c > last_be:
-            df.at[i, 'BE'] = f"ATAK (Bottom) {c_l}"; df.at[i, 'Type'] = "warn"
+            df.at[i, 'BE'] = f"ATAK (Bottom) {c_l:.2f}"; df.at[i, 'Type'] = "warn"
 
         # TREND
         if trend == "Bullish":
             if c_l < p_l: 
-                df.at[i-1, 'BU'] = f"BU(T) {d_str} : {p_h}"; df.at[i-1, 'Type']="bull"; last_bu = p_h
+                df.at[i-1, 'BU'] = f"BU(T) {d_str} : {p_h:.2f}"; df.at[i-1, 'Type']="bull"; last_bu = p_h
             if c_h > p_h: 
-                df.at[i-1, 'BE'] = f"R(Teji) : {p_l}"; df.at[i-1, 'Type']="info"; last_be = p_l
+                df.at[i-1, 'BE'] = f"R(Teji) : {p_l:.2f}"; df.at[i-1, 'Type']="info"; last_be = p_l
         
         elif trend == "Bearish":
             if c_h > p_h: 
-                df.at[i-1, 'BE'] = f"BE(M) {d_str} : {p_l}"; df.at[i-1, 'Type']="bear"; last_be = p_l
+                df.at[i-1, 'BE'] = f"BE(M) {d_str} : {p_l:.2f}"; df.at[i-1, 'Type']="bear"; last_be = p_l
             if c_l < p_l: 
-                df.at[i-1, 'BU'] = f"R(Mandi) {d_str} : {p_h}"; df.at[i-1, 'Type']="info"; last_bu = p_h
+                df.at[i-1, 'BU'] = f"R(Mandi) {d_str} : {p_h:.2f}"; df.at[i-1, 'Type']="info"; last_bu = p_h
                 
         else: # Neutral
-            if c_h > p_h: trend="Bullish"; df.at[i-1, 'BE']=f"Start Teji : {p_l}"; df.at[i-1, 'Type']="bull"; last_be=p_l
-            elif c_l < p_l: trend="Bearish"; df.at[i-1, 'BU']=f"Start Mandi : {p_h}"; df.at[i-1, 'Type']="bear"; last_bu=p_h
+            if c_h > p_h: trend="Bullish"; df.at[i-1, 'BE']=f"Start Teji : {p_l:.2f}"; df.at[i-1, 'Type']="bull"; last_be=p_l
+            elif c_l < p_l: trend="Bearish"; df.at[i-1, 'BU']=f"Start Mandi : {p_h:.2f}"; df.at[i-1, 'Type']="bear"; last_bu=p_h
             
         # SWITCH
         if trend == "Bearish" and last_bu and c_c > last_bu:
@@ -187,13 +175,17 @@ st.title(f"📊 VNS Theory: {selected_stock}")
 st.markdown(f"Analysis: **{st.session_state.start_date.strftime('%d-%b-%Y')}** to **{st.session_state.end_date.strftime('%d-%b-%Y')}**")
 
 if run_btn:
-    with st.spinner("Fetching..."):
+    with st.spinner("Fetching data from Yahoo Finance..."):
         raw_df = fetch_data(selected_stock, st.session_state.start_date, st.session_state.end_date)
         if raw_df is not None:
             df, final_trend, final_res, final_sup = analyze_vns(raw_df)
             
-            # --- HEADER CARDS (Custom HTML) ---
+            # --- HEADER CARDS ---
             c1, c2, c3, c4 = st.columns(4)
+            
+            # Helper for HTML Metrics
+            def card(label, value):
+                return f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>"""
             
             with c1:
                 css_cls, text = "trend-neutral", "NEUTRAL"
@@ -201,18 +193,9 @@ if run_btn:
                 elif final_trend == "Bearish": css_cls, text = "trend-bear", "BEARISH (MANDI)"
                 st.markdown(f"""<div class="trend-card {css_cls}"><div style="font-size:0.8rem; margin-bottom:5px; color:#444;">OVERALL TREND</div>{text}</div>""", unsafe_allow_html=True)
             
-            # Helper for HTML Metrics
-            def metric_html(label, value):
-                return f"""
-                <div class="metric-container">
-                    <div style="font-size:0.9rem; color:#666; font-weight:bold; margin-bottom:5px;">{label}</div>
-                    <div style="font-size:1.6rem; color:#000; font-weight:bold;">{value}</div>
-                </div>
-                """
-            
-            with c2: st.markdown(metric_html("Last Close", f"{df.iloc[-1]['CH_CLOSING_PRICE']:.2f}"), unsafe_allow_html=True)
-            with c3: st.markdown(metric_html("Active Resistance", f"{final_res:.2f}" if final_res else "-"), unsafe_allow_html=True)
-            with c4: st.markdown(metric_html("Active Support", f"{final_sup:.2f}" if final_sup else "-"), unsafe_allow_html=True)
+            with c2: st.markdown(card("Last Close", f"{df.iloc[-1]['CH_CLOSING_PRICE']:.2f}"), unsafe_allow_html=True)
+            with c3: st.markdown(card("Active Resistance", f"{final_res:.2f}" if final_res else "-"), unsafe_allow_html=True)
+            with c4: st.markdown(card("Active Support", f"{final_sup:.2f}" if final_sup else "-"), unsafe_allow_html=True)
             
             st.divider()
             
@@ -237,5 +220,5 @@ if run_btn:
                 use_container_width=True,
                 height=800
             )
-        else: st.error("⚠️ Data Error. Check symbol or try again.")
+        else: st.error("⚠️ Data Error. Could not fetch data from Yahoo Finance. Please check your internet or try again later.")
 else: st.info("👈 Click RUN")
