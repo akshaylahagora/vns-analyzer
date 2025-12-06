@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import urllib.parse
 import time
 import json
 import os
@@ -10,9 +11,9 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Pro F&O Scanner", page_icon="🔭", layout="wide")
 
 st.title("🔭 Pro F&O Scanner")
-st.markdown("Automated VNS Scanner • **Powered by Yahoo Finance**")
+st.markdown("Automated VNS Scanner • **Updates daily after 6:00 PM**")
 
-# --- CUSTOM CSS (VISIBILITY FIX) ---
+# --- CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: white; color: black; }
@@ -20,29 +21,21 @@ st.markdown("""
     
     .stock-card {
         background-color: #ffffff;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        margin-bottom: 5px;
+        padding: 15px; border-radius: 10px; border: 1px solid #e0e0e0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 5px;
     }
     .stock-symbol { font-size: 1.1em; font-weight: 800; color: #333; }
     .stock-price { font-size: 1.0em; font-weight: 600; color: #555; }
     
-    .col-header { 
-        padding: 10px; border-radius: 8px; color: white; 
-        font-weight: bold; text-align: center; margin-bottom: 15px; text-transform: uppercase; 
-    }
-    
+    .col-header { padding: 10px; border-radius: 8px; color: white; font-weight: bold; text-align: center; margin-bottom: 15px; text-transform: uppercase; }
     div[data-testid="stDialog"] { width: 85vw; } 
     .stSidebar label { color: #333 !important; }
     .streamlit-expanderHeader { color: #000000 !important; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- CONFIGURATION ---
+# --- CONFIG ---
 SCAN_FILE = "daily_scan_results.json" 
-
 FNO_STOCKS = [
     "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
     "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
@@ -72,65 +65,37 @@ FNO_STOCKS = [
 ]
 FNO_STOCKS = sorted(list(set(FNO_STOCKS)))
 
-# --- SESSION STATE ---
-if 'scan_start_date' not in st.session_state:
-    st.session_state.scan_start_date = datetime.now() - timedelta(days=30)
-if 'scan_duration_label' not in st.session_state:
-    st.session_state.scan_duration_label = "1M"
+if 'scan_start_date' not in st.session_state: st.session_state.scan_start_date = datetime.now() - timedelta(days=30)
+if 'scan_duration_label' not in st.session_state: st.session_state.scan_duration_label = "1M"
 
 def update_scan_settings():
-    selection = st.session_state.duration_select
-    st.session_state.scan_duration_label = selection
+    sel = st.session_state.duration_select
+    st.session_state.scan_duration_label = sel
     now = datetime.now()
-    if selection == "1M": st.session_state.scan_start_date = now - timedelta(days=30)
-    elif selection == "3M": st.session_state.scan_start_date = now - timedelta(days=90)
-    elif selection == "6M": st.session_state.scan_start_date = now - timedelta(days=180)
-    elif selection == "1Y": st.session_state.scan_start_date = now - timedelta(days=365)
+    days = {"1M":30, "2M":60, "3M":90, "6M":180, "1Y":365}
+    if sel in days: st.session_state.scan_start_date = now - timedelta(days=days[sel])
 
-# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Scanner Settings")
-    st.subheader("1. Period")
-    st.radio("Duration", ["1M", "3M", "6M", "1Y"], index=0, horizontal=True, key="duration_select", on_change=update_scan_settings)
+    st.radio("Duration", ["1M", "2M", "3M", "6M", "1Y"], index=0, horizontal=True, key="duration_select", on_change=update_scan_settings)
     st.divider()
-    st.subheader("2. Price Filter (₹)")
     c1, c2 = st.columns(2)
-    view_min_price = c1.number_input("Min", min_value=0, value=1000, step=100)
-    view_max_price = c2.number_input("Max", min_value=0, value=100000, step=500)
+    view_min = c1.number_input("Min", 1000, value=1000)
+    view_max = c2.number_input("Max", 0, value=100000)
     st.divider()
-    st.subheader("3. Speed")
-    st.info("Yahoo Finance is fast! Default speed is optimized.")
-    scan_delay = st.slider("Delay (sec)", 0.0, 2.0, 0.1, 0.1)
-    st.divider()
+    scan_delay = st.slider("Delay (sec)", 0.0, 1.0, 0.1)
     force_scan = st.button("🔄 Force Refresh", type="primary", use_container_width=True)
 
-# --- CORE LOGIC (YAHOO FINANCE) ---
+# --- CORE ---
 def fetch_stock_data(symbol, start_date):
     try:
         yf_symbol = f"{symbol}.NS"
-        # Fetch slightly more data to ensure we have enough
-        req_start = start_date - timedelta(days=5)
-        
-        # Download data
-        df = yf.download(yf_symbol, start=req_start, progress=False)
-        
+        req_start = start_date - timedelta(days=30) # Buffer
+        df = yf.download(yf_symbol, start=req_start, progress=False, auto_adjust=False)
         if df.empty: return None
-        
-        # Flatten MultiIndex if present
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df = df.reset_index()
-        
-        # Rename columns to match VNS logic
-        df = df.rename(columns={
-            'Date': 'Date',
-            'Open': 'CH_OPENING_PRICE',
-            'High': 'CH_TRADE_HIGH_PRICE',
-            'Low': 'CH_TRADE_LOW_PRICE',
-            'Close': 'CH_CLOSING_PRICE'
-        })
-        
+        df = df.rename(columns={'Date': 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close'})
         df['Date'] = pd.to_datetime(df['Date'])
         return df.sort_values('Date').reset_index(drop=True)
     except: return None
@@ -138,169 +103,130 @@ def fetch_stock_data(symbol, start_date):
 def analyze_vns_full(df):
     results = []
     trend = "Neutral"
-    last_bu, last_be = None, None
+    last_peak = df.iloc[0]['High']; last_trough = df.iloc[0]['Low']
+    reaction_support = df.iloc[0]['Low']; reaction_resist = df.iloc[0]['High']
+    last_peak_idx = 0; last_trough_idx = 0
     
-    for i in range(len(df)):
-        row = df.iloc[i]; prev = df.iloc[i-1] if i > 0 else None
+    for i in range(1, len(df)):
+        curr = df.iloc[i]; c_h, c_l = curr['High'], curr['Low']
         bu, be, signal, signal_type = None, None, "", ""
-        if prev is not None:
-            if row['CH_TRADE_LOW_PRICE'] < prev['CH_TRADE_LOW_PRICE']: bu = prev['CH_TRADE_HIGH_PRICE']; last_bu = bu
-            if row['CH_TRADE_HIGH_PRICE'] > prev['CH_TRADE_HIGH_PRICE']: be = prev['CH_TRADE_LOW_PRICE']; last_be = be
-            
-            if last_bu and row['CH_CLOSING_PRICE'] > last_bu and trend != "Bullish":
-                trend = "Bullish"; signal = "TEJI (Breakout)"; signal_type = "bull"
-            elif last_be and row['CH_CLOSING_PRICE'] < last_be and trend != "Bearish":
-                trend = "Bearish"; signal = "MANDI (Breakdown)"; signal_type = "bear"
-            elif trend == "Bullish" and last_bu and (row['CH_TRADE_HIGH_PRICE'] >= last_bu * 0.995) and row['CH_CLOSING_PRICE'] < last_bu:
-                signal = "ATAK (Top)"; signal_type = "warn"
-            elif trend == "Bearish" and last_be and (row['CH_TRADE_LOW_PRICE'] <= last_be * 1.005) and row['CH_CLOSING_PRICE'] > last_be:
-                signal = "ATAK (Bottom)"; signal_type = "warn"
-            else:
-                if trend == "Bullish":
-                    if row['CH_TRADE_LOW_PRICE'] < prev['CH_TRADE_LOW_PRICE']: signal = "Reaction (Buy)"; signal_type = "info"
-                    elif row['CH_TRADE_HIGH_PRICE'] > prev['CH_TRADE_HIGH_PRICE']: signal = "Teji Cont."; signal_type = "bull_light"
-                elif trend == "Bearish":
-                    if row['CH_TRADE_HIGH_PRICE'] > prev['CH_TRADE_HIGH_PRICE']: signal = "Reaction (Sell)"; signal_type = "info"
-                    elif row['CH_TRADE_LOW_PRICE'] < prev['CH_TRADE_LOW_PRICE']: signal = "Mandi Cont."; signal_type = "bear_light"
         
+        if trend == "Teji":
+            if c_h > last_peak:
+                bu = f"T (Teji) {c_h:.2f}"; signal_type="bull_dark"; signal="New High"
+                swing_df = df.iloc[last_peak_idx:i+1]; reaction_support = swing_df['Low'].min()
+                be = f"R (Sup) {reaction_support:.2f}"
+                last_peak = c_h; last_peak_idx = i
+            elif c_l < reaction_support:
+                bu = f"ATAK (Top) {last_peak:.2f}"; be = f"M (Mandi) {c_l:.2f}"; signal_type="bear_dark"; signal="Reversal"
+                trend = "Mandi"; last_trough = c_l; last_trough_idx = i; reaction_resist = c_h
+        elif trend == "Mandi":
+            if c_l < last_trough:
+                be = f"M (Mandi) {c_l:.2f}"; signal_type="bear_dark"; signal="New Low"
+                swing_df = df.iloc[last_trough_idx:i+1]; reaction_resist = swing_df['High'].max()
+                bu = f"R (Resist) {reaction_resist:.2f}"
+                last_trough = c_l; last_trough_idx = i
+            elif c_h > reaction_resist:
+                be = f"ATAK (Bot) {last_trough:.2f}"; bu = f"T (Teji) {c_h:.2f}"; signal_type="bull_dark"; signal="Reversal"
+                trend = "Teji"; last_peak = c_h; last_peak_idx = i; reaction_support = c_l
+        else:
+            if c_h > last_peak: trend="Teji"; bu="Start Teji"; signal_type="bull_dark"; last_peak=c_h; last_peak_idx=i
+            elif c_l < last_trough: trend="Mandi"; be="Start Mandi"; signal_type="bear_dark"; last_trough=c_l; last_trough_idx=i
+        
+        # Use color types matching Home.py
+        # Mapping logic to color types:
+        # T (Teji) -> bull_dark (Dark Green)
+        # M (Mandi) -> bear_dark (Dark Red)
+        # R (Sup/Res) -> Light Green / Light Red based on trend context
+        # ATAK -> Light Red (Top) / Light Green (Bottom)
+        
+        color_type = ""
+        if "T (Teji)" in str(bu) or "Start Teji" in str(bu): color_type = "bull_dark"
+        elif "M (Mandi)" in str(be) or "Start Mandi" in str(be): color_type = "bear_dark"
+        elif "ATAK (Top)" in str(bu): color_type = "bear_light"
+        elif "ATAK (Bot)" in str(be): color_type = "bull_light"
+        elif "R (Sup)" in str(be): color_type = "bull_light"
+        elif "R (Resist)" in str(bu): color_type = "bear_light"
+
         results.append({
-            'Date': row['Date'].strftime('%d-%b-%Y'), 'Open': row['CH_OPENING_PRICE'], 
-            'High': row['CH_TRADE_HIGH_PRICE'], 'Low': row['CH_TRADE_LOW_PRICE'], 
-            'Close': row['CH_CLOSING_PRICE'], 'BU': bu, 'BE': be, 'Signal': signal, 'Type': signal_type
+            'Date': curr['Date'].strftime('%d-%b-%Y'), 'Open': curr['Open'], 'High': curr['High'], 'Low': curr['Low'], 'Close': curr['Close'],
+            'BU': bu, 'BE': be, 'Signal': signal, 'Type': color_type
         })
-    return trend, last_bu, last_be, df.iloc[-1]['CH_CLOSING_PRICE'], results
+    return trend, reaction_resist, reaction_support, df.iloc[-1]['Close'], results
 
 def run_full_scan():
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    scan_results = []
-    
-    start_date = st.session_state.scan_start_date
-    duration_used = st.session_state.scan_duration_label
-    
+    results = []; bar = st.progress(0); status = st.empty()
+    start_date = st.session_state.scan_start_date; dur = st.session_state.scan_duration_label
     for i, stock in enumerate(FNO_STOCKS):
-        status_text.caption(f"Scanning {stock}...")
+        status.caption(f"Scanning {stock}...")
         df = fetch_stock_data(stock, start_date)
         if df is not None:
-            trend, bu, be, close, history = analyze_vns_full(df)
-            scan_results.append({ "Symbol": stock, "Trend": trend, "Close": close, "BU": bu, "BE": be, "History": history })
-        progress_bar.progress((i + 1) / len(FNO_STOCKS))
-        time.sleep(scan_delay) 
+            trend, res, sup, close, hist = analyze_vns_full(df)
+            results.append({ "Symbol": stock, "Trend": trend, "Close": close, "BU": res, "BE": sup, "History": hist })
+        bar.progress((i+1)/len(FNO_STOCKS)); time.sleep(scan_delay)
+    bar.empty(); status.empty()
+    save = { "date": datetime.now().strftime("%Y-%m-%d"), "last_updated": datetime.now().strftime("%H:%M:%S"), "duration_label": dur, "stocks": results }
+    with open(SCAN_FILE, 'w') as f: json.dump(save, f)
+    return save
 
-    progress_bar.empty(); status_text.empty()
-    save_payload = {
-        "date": datetime.now().strftime("%Y-%m-%d"),
-        "last_updated": datetime.now().strftime("%H:%M:%S"),
-        "duration_label": duration_used,
-        "stocks": scan_results
-    }
-    with open(SCAN_FILE, 'w') as f: json.dump(save_payload, f)
-    return save_payload
-
-def check_auto_scan():
-    now = datetime.now()
-    today_str = now.strftime("%Y-%m-%d")
-    if not os.path.exists(SCAN_FILE): return True, "Initial Setup"
+def check_scan():
+    now = datetime.now(); today = now.strftime("%Y-%m-%d")
+    if not os.path.exists(SCAN_FILE): return True, "Init"
     try:
         with open(SCAN_FILE, 'r') as f: data = json.load(f)
-        file_date = data.get("date")
-        if file_date != today_str and now.hour >= 18: return True, "6 PM Update"
+        if data.get("date") != today and now.hour >= 18: return True, "Daily"
         return False, data
     except: return True, "Error"
 
-# --- MAIN CONTROLLER ---
-should_scan, payload = check_auto_scan()
+do_scan, payload = check_scan()
+if force_scan: st.toast("Scanning..."); current_data = run_full_scan(); st.rerun()
+elif do_scan: st.info("Auto-Scanning..."); current_data = run_full_scan(); st.rerun()
+else: current_data = payload
 
-if force_scan:
-    st.toast("Forcing Refresh...")
-    current_data = run_full_scan()
-    st.rerun()
-elif should_scan is True:
-    st.info(f"📅 Running Auto-Scan ({payload})...")
-    current_data = run_full_scan()
-    st.rerun()
-else:
-    current_data = payload
-
-# --- POPUP DIALOG ---
-@st.dialog("Stock Details", width="large")
-def show_details(stock):
-    st.subheader(f"{stock['Symbol']} : ₹{stock['Close']:.2f}")
-    
-    c1, c2, c3 = st.columns(3)
-    def card(label, value):
-        return f"""<div style="background:#f9f9f9; padding:10px; border-radius:8px; border:1px solid #ddd; text-align:center;">
-                    <div style="color:#666; font-size:0.8rem; font-weight:bold;">{label}</div>
-                    <div style="color:#000; font-size:1.2rem; font-weight:bold;">{value}</div>
-                   </div>"""
-    
-    with c1: st.markdown(card("Trend", stock['Trend']), unsafe_allow_html=True)
-    with c2: st.markdown(card("Resistance", f"{stock['BU']:.2f}" if stock['BU'] else "-"), unsafe_allow_html=True)
-    with c3: st.markdown(card("Support", f"{stock['BE']:.2f}" if stock['BE'] else "-"), unsafe_allow_html=True)
-    
-    st.divider()
-    
-    def color_rows(row):
-        s = row['Type']
-        if s == 'bull': return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row)
-        if s == 'bear': return ['background-color: #f8d7da; color: #721c24; font-weight: bold'] * len(row)
-        if s == 'warn': return ['background-color: #fff3cd; color: #664d03; font-weight: bold'] * len(row)
-        if s == 'info': return ['background-color: #e2e6ea; color: #0c5460; font-style: italic'] * len(row)
-        return [''] * len(row)
-
-    hist_df = pd.DataFrame(stock['History'])
-    st.dataframe(
-        hist_df.style.apply(color_rows, axis=1).format({
-            "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}", "BU": "{:.2f}", "BE": "{:.2f}"
-        }, na_rep=""),
-        column_config={"Type": None}, 
-        use_container_width=True, 
-        height=500
-    )
-
-# --- RENDER UI ---
+# --- DISPLAY ---
 if current_data:
-    data_duration = current_data.get('duration_label', 'Unknown')
-    st.caption(f"Last Scanned: {current_data['date']} {current_data['last_updated']} | Data Duration: {data_duration}")
-    
-    if data_duration != st.session_state.scan_duration_label:
-        st.warning(f"⚠️ Data is {data_duration}, but you selected {st.session_state.scan_duration_label}. Click Force Refresh.")
+    st.caption(f"Last Scanned: {current_data['date']} {current_data['last_updated']}")
+    all_s = current_data['stocks']; filtered = [s for s in all_s if view_min_price <= s['Close'] <= view_max_price]
+    bulls = [s for s in filtered if s['Trend'] == "Teji"]
+    bears = [s for s in filtered if s['Trend'] == "Mandi"]
+    neut = [s for s in filtered if s['Trend'] == "Neutral"]
 
-    all_stocks = current_data['stocks']
-    filtered_stocks = [s for s in all_stocks if view_min_price <= s['Close'] <= view_max_price]
-
-    bulls = [r for r in filtered_stocks if r['Trend'] == "Bullish"]
-    bears = [r for r in filtered_stocks if r['Trend'] == "Bearish"]
-    neutral = [r for r in filtered_stocks if r['Trend'] == "Neutral"]
-
-    def render_list(stock_list, header_text, header_color):
-        st.markdown(f"""
-        <div style="background-color:{header_color}; padding:8px; border-radius:6px; color:white; font-weight:bold; text-align:center; margin-bottom:10px;">
-            {header_text} ({len(stock_list)})
-        </div>
-        """, unsafe_allow_html=True)
-        
-        for s in stock_list:
-            bu_text = f"{s['BU']:.2f}" if s['BU'] else "-"
-            be_text = f"{s['BE']:.2f}" if s['BE'] else "-"
-
-            st.markdown(f"""
-            <div class="stock-card">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span class="stock-symbol">{s['Symbol']}</span>
-                    <span class="stock-price">₹{s['Close']:.2f}</span>
-                </div>
-                <div style="font-size:0.85em; color:#666; margin-top:5px; display:flex; justify-content:space-between;">
-                    <span>BU: {bu_text}</span>
-                    <span>BE: {be_text}</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    @st.dialog("Details", width="large")
+    def show(s):
+        st.subheader(f"{s['Symbol']} : {s['Close']:.2f}")
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Trend", s['Trend']); c2.metric("Resistance", f"{s['BU']:.2f}"); c3.metric("Support", f"{s['BE']:.2f}")
+        st.divider()
+        h = pd.DataFrame(s['History'])
+        def color(row):
+            t = row['Type']
+            # EXACT COLOR MAPPING FROM HOME.PY
+            if t=='bull_dark': return ['background-color: #228B22; color: white; font-weight: bold']*len(row) # Dark Green
+            if t=='bear_dark': return ['background-color: #8B0000; color: white; font-weight: bold']*len(row) # Dark Red
+            if t=='bull_light': return ['background-color: #90EE90; color: black; font-weight: bold']*len(row) # Light Green
+            if t=='bear_light': return ['background-color: #FFC0CB; color: black; font-weight: bold']*len(row) # Light Red
+            return ['']*len(row)
             
-            if st.button(f"🔍 View {s['Symbol']}", key=f"btn_{s['Symbol']}", use_container_width=True):
-                show_details(s)
+        st.dataframe(h.style.apply(color, axis=1), column_config={"Type": None}, use_container_width=True, height=400)
+
+    def render(lst, title, col):
+        st.markdown(f"<div style='background:{col}; padding:8px; border-radius:5px; color:white; text-align:center; font-weight:bold;'>{title} ({len(lst)})</div>", unsafe_allow_html=True)
+        for s in lst:
+            with st.container():
+                st.markdown(f"""
+                <div class="stock-card">
+                    <div style="display:flex; justify-content:space-between;">
+                        <span class="stock-symbol">{s['Symbol']}</span>
+                        <span class="stock-price">{s['Close']:.2f}</span>
+                    </div>
+                    <div style="font-size:0.85em; color:#666; display:flex; justify-content:space-between;">
+                        <span>Res: {s['BU']:.2f}</span><span>Sup: {s['BE']:.2f}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("View", key=s['Symbol'], use_container_width=True): show(s)
 
     c1, c2, c3 = st.columns(3)
-    with c1: render_list(bulls, "🟢 BULLISH / TEJI", "#28a745")
-    with c2: render_list(bears, "🔴 BEARISH / MANDI", "#dc3545")
-    with c3: render_list(neutral, "⚪ NEUTRAL", "#6c757d")
+    with c1: render(bulls, "TEJI (BULL)", "#28a745")
+    with c2: render(bears, "MANDI (BEAR)", "#dc3545")
+    with c3: render(neut, "NEUTRAL", "#6c757d")
