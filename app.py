@@ -1,17 +1,15 @@
 import streamlit as st
 import pandas as pd
-import requests
+import yfinance as yf
 import urllib.parse
 from datetime import datetime, timedelta
-import yfinance as yf
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS ---
+# --- CSS ---
 st.markdown("""
 <style>
-    /* Force Light Mode */
     .stApp { background-color: white; color: black; }
     
     /* Metrics */
@@ -24,21 +22,13 @@ st.markdown("""
     .trend-bear { background-color: #f8d7da; color: #842029; border-color: #f5c2c7; }
     .trend-neutral { background-color: #e2e3e5; color: #41464b; border-color: #d3d6d8; }
 
-    /* Table Font */
     .stDataFrame { font-size: 1.1rem; }
     .stDataFrame td { vertical-align: middle !important; white-space: pre-wrap !important; }
-    .stSidebar label { color: #333 !important; }
-    
-    /* Metric Container */
-    .metric-container {
-        background-color: #f8f9fa; border: 1px solid #ddd;
-        border-radius: 8px; padding: 15px; text-align: center;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    }
+    .metric-container { background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 15px; text-align: center; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 </style>
 """, unsafe_allow_html=True)
 
-# --- STOCK LIST ---
+# --- CONFIG ---
 STOCK_LIST = [
     "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
     "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
@@ -68,17 +58,16 @@ STOCK_LIST = [
 ]
 STOCK_LIST = sorted(list(set(STOCK_LIST))) 
 
-# --- STATE ---
 if 'start_date' not in st.session_state: st.session_state.start_date = datetime.now() - timedelta(days=60)
 if 'end_date' not in st.session_state: st.session_state.end_date = datetime.now()
 
 def update_dates():
     sel = st.session_state.duration_selector
     now = datetime.now()
-    st.session_state.end_date = now
     days = {"1M":30, "2M":60, "3M":90, "6M":180, "1Y":365}
     if sel == "YTD": st.session_state.start_date = datetime(now.year, 1, 1)
     elif sel in days: st.session_state.start_date = now - timedelta(days=days[sel])
+    st.session_state.end_date = now
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -90,118 +79,129 @@ with st.sidebar:
     st.divider()
     run_btn = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
-# --- DATA FETCHING (FIXED) ---
+# --- FETCH ---
 @st.cache_data(ttl=300)
 def fetch_data(symbol, start, end):
     try:
         yf_symbol = f"{symbol}.NS"
         req_start = start - timedelta(days=60)
-        
-        # FIX: Added auto_adjust=False to prevent data structure changes and suppress warnings
         df = yf.download(yf_symbol, start=req_start, end=end + timedelta(days=1), progress=False, auto_adjust=False)
-        
         if df.empty: return None
-        
-        # Flatten MultiIndex (This fixes the 'Data Error' caused by recent YFinance updates)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df = df.reset_index()
-        
-        # Rename standard columns
         df = df.rename(columns={'Date': 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close'})
-        
-        # Ensure Types
         df['Date'] = pd.to_datetime(df['Date'])
-        for c in ['Open', 'High', 'Low', 'Close']: 
-            df[c] = df[c].astype(float)
-            
         return df.sort_values('Date').reset_index(drop=True)
     except: return None
-    return None
 
-# --- NEW VNS LOGIC ---
+# --- CORE LOGIC (CORRECTED SEQUENCE) ---
 def analyze_vns(df):
     df['BU'], df['BE'], df['Type'] = "", "", ""
     trend = "Neutral"
     
+    # State Memory
     last_peak = df.iloc[0]['High']
     last_trough = df.iloc[0]['Low']
+    
     reaction_support = df.iloc[0]['Low']
     reaction_resist = df.iloc[0]['High']
     
+    # Indices to handle lookbacks
     last_peak_idx = 0
     last_trough_idx = 0
+    reaction_idx = 0
     
     for i in range(1, len(df)):
         curr = df.iloc[i]
         c_h, c_l = curr['High'], curr['Low']
         d_str = curr['Date'].strftime('%d-%b').upper()
         
-        # TEJI (Up)
+        # --- TEJI ---
         if trend == "Teji":
             if c_h > last_peak:
-                # MARK TEJI (T) -> DARK GREEN
-                df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_h:.2f}"
-                df.at[i, 'Type'] = "bull_dark"
+                # 1. New High -> Mark TEJI (Today)
+                df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_h:.2f}"; df.at[i, 'Type'] = "bull_dark"
                 
-                # REACTION -> LIGHT GREEN
-                swing_df = df.iloc[last_peak_idx:i+1]
-                reaction_support = swing_df['Low'].min()
+                # 2. Find Lowest Low between Old Peak and New Peak
+                swing_df = df.iloc[last_peak_idx : i+1]
+                min_idx = swing_df['Low'].idxmin()
+                reaction_support = df.at[min_idx, 'Low']
+                reaction_idx = min_idx
                 
-                df.at[i, 'BE'] = f"R(Teji)\n{reaction_support:.2f}"
-                if df.at[i, 'Type'] == "": df.at[i, 'Type'] = "bull_light"
+                # Mark Reaction on the PAST date it happened
+                r_date = df.at[min_idx, 'Date'].strftime('%d-%b').upper()
+                df.at[min_idx, 'BE'] = f"R(Teji) {r_date}\n{reaction_support:.2f}"
+                if df.at[min_idx, 'Type'] == "": df.at[min_idx, 'Type'] = "bull_light"
                 
-                last_peak = c_h; last_peak_idx = i
+                last_peak = c_h
+                last_peak_idx = i
                 
             elif c_l < reaction_support:
-                # ATAK (TOP) -> LIGHT RED
-                df.at[i, 'BU'] = f"ATAK (Top)\n{last_peak:.2f}"
+                # 3. Support Broken -> Scan between Reaction Date and Today for High
+                # This logic finds the "Lower High" (Atak)
+                interim_df = df.iloc[reaction_idx : i]
+                if not interim_df.empty:
+                    atak_idx = interim_df['High'].idxmax()
+                    atak_val = df.at[atak_idx, 'High']
+                    a_date = df.at[atak_idx, 'Date'].strftime('%d-%b').upper()
+                    
+                    # Mark Atak on PAST Row
+                    df.at[atak_idx, 'BU'] = f"ATAK (Top) {a_date}\n{atak_val:.2f}"
+                    df.at[atak_idx, 'Type'] = "bear_light"
                 
-                # MANDI (M) -> DARK RED
+                # 4. Mark Today as MANDI
+                df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_l:.2f}"; df.at[i, 'Type'] = "bear_dark"
+                
                 trend = "Mandi"
-                df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_l:.2f}"
-                df.at[i, 'Type'] = "bear_dark"
-                
-                last_trough = c_l; last_trough_idx = i
-                reaction_resist = c_h
+                last_trough = c_l; last_trough_idx = i; reaction_resist = c_h
 
-        # MANDI (Down)
+        # --- MANDI ---
         elif trend == "Mandi":
             if c_l < last_trough:
-                # MARK MANDI (M) -> DARK RED
-                df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_l:.2f}"
-                df.at[i, 'Type'] = "bear_dark"
+                # 1. New Low -> Mark MANDI
+                df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_l:.2f}"; df.at[i, 'Type'] = "bear_dark"
                 
-                # REACTION -> LIGHT RED
-                swing_df = df.iloc[last_trough_idx:i+1]
-                reaction_resist = swing_df['High'].max()
+                # 2. Find Highest High between Old Trough and New Trough
+                swing_df = df.iloc[last_trough_idx : i+1]
+                max_idx = swing_df['High'].idxmax()
+                reaction_resist = df.at[max_idx, 'High']
+                reaction_idx = max_idx
                 
-                df.at[i, 'BU'] = f"R(Mandi)\n{reaction_resist:.2f}"
-                if df.at[i, 'Type'] == "": df.at[i, 'Type'] = "bear_light"
+                # Mark Reaction on PAST date
+                r_date = df.at[max_idx, 'Date'].strftime('%d-%b').upper()
+                df.at[max_idx, 'BU'] = f"R(Mandi) {r_date}\n{reaction_resist:.2f}"
+                if df.at[max_idx, 'Type'] == "": df.at[max_idx, 'Type'] = "bear_light"
                 
                 last_trough = c_l; last_trough_idx = i
                 
             elif c_h > reaction_resist:
-                # ATAK (BOTTOM) -> LIGHT GREEN
-                df.at[i, 'BE'] = f"ATAK (Bot)\n{last_trough:.2f}"
+                # 3. Resist Broken -> Find ATAK (Higher Low)
+                interim_df = df.iloc[reaction_idx : i]
+                if not interim_df.empty:
+                    atak_idx = interim_df['Low'].idxmin()
+                    atak_val = df.at[atak_idx, 'Low']
+                    a_date = df.at[atak_idx, 'Date'].strftime('%d-%b').upper()
+                    
+                    # Mark Atak
+                    df.at[atak_idx, 'BE'] = f"ATAK (Bot) {a_date}\n{atak_val:.2f}"
+                    df.at[atak_idx, 'Type'] = "bull_light"
                 
-                # TEJI (T) -> DARK GREEN
+                # 4. Mark Today as TEJI
+                df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_h:.2f}"; df.at[i, 'Type'] = "bull_dark"
+                
                 trend = "Teji"
-                df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_h:.2f}"
-                df.at[i, 'Type'] = "bull_dark"
-                
-                last_peak = c_h; last_peak_idx = i
-                reaction_support = c_l
+                last_peak = c_h; last_peak_idx = i; reaction_support = c_l
 
-        # NEUTRAL
+        # --- NEUTRAL ---
         else:
             if c_h > last_peak:
                 trend = "Teji"; df.at[i, 'BU'] = "Start Teji"; df.at[i, 'Type']="bull_dark"
                 last_peak=c_h; last_peak_idx=i; reaction_support=df.iloc[i-1]['Low']
+                reaction_idx = i-1
             elif c_l < last_trough:
                 trend = "Mandi"; df.at[i, 'BE'] = "Start Mandi"; df.at[i, 'Type']="bear_dark"
                 last_trough=c_l; last_trough_idx=i; reaction_resist=df.iloc[i-1]['High']
+                reaction_idx = i-1
             
     return df, trend, reaction_resist, reaction_support
 
@@ -213,67 +213,45 @@ if run_btn:
     with st.spinner("Fetching..."):
         raw_df = fetch_data(selected_stock, st.session_state.start_date, st.session_state.end_date)
         if raw_df is not None:
-            # Run logic on full data
             df_full, final_trend, fin_res, fin_sup = analyze_vns(raw_df)
-            
-            # Filter for display
             mask = (df_full['Date'] >= st.session_state.start_date) & (df_full['Date'] <= st.session_state.end_date)
             df = df_full.loc[mask].copy()
             
-            # HEADER
             c1, c2, c3, c4 = st.columns(4)
             def card(label, value): return f"""<div class="metric-container"><div style="font-size:0.9rem; color:#666; font-weight:bold;">{label}</div><div style="font-size:1.6rem; color:#000; font-weight:bold;">{value}</div></div>"""
             with c1:
-                # Custom Trend Badge
-                color = "#28a745" if final_trend == "Teji" else "#dc3545" if final_trend == "Mandi" else "#6c757d"
-                txt = "BULLISH (TEJI)" if final_trend == "Teji" else "BEARISH (MANDI)" if final_trend == "Mandi" else "NEUTRAL"
-                st.markdown(f"""<div style="background:{color}; padding:15px; border-radius:8px; text-align:center; color:white; font-weight:bold; font-size:1.2rem;">{txt}</div>""", unsafe_allow_html=True)
+                color, txt = ("#6c757d", "NEUTRAL")
+                if final_trend == "Teji": color, txt = ("#28a745", "BULLISH (TEJI)")
+                elif final_trend == "Mandi": color, txt = ("#dc3545", "BEARISH (MANDI)")
+                st.markdown(f"""<div style="background:{color}; padding:15px; border-radius:8px; text-align:center; color:white; font-weight:bold; font-size:1.2rem; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">{txt}</div>""", unsafe_allow_html=True)
             with c2: st.markdown(card("Last Close", f"{df.iloc[-1]['Close']:.2f}"), unsafe_allow_html=True)
             with c3: st.markdown(card("Active Resist", f"{fin_res:.2f}"), unsafe_allow_html=True)
             with c4: st.markdown(card("Active Support", f"{fin_sup:.2f}"), unsafe_allow_html=True)
             
             st.divider()
             
-            # TABLE
-            disp = df[['Date', 'Open', 'High', 'Low', 'Close', 'BU', 'BE', 'Type']].copy()
-            disp.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'BU (Teji/Resist)', 'BE (Mandi/Support)', 'Type']
-            
-            # --- COLOR FUNCTION ---
+            # --- COLOR ---
             def color_cells(row):
-                # Default background white
                 styles = ['background-color: white; color: black; white-space: pre-wrap;'] * len(row)
+                bu_txt = str(row['BU']); be_txt = str(row['BE'])
                 
-                # Check BU Column
-                bu_txt = str(row['BU (Teji/Resist)'])
-                if "BU(T)" in bu_txt or "Teji" in bu_txt:
-                    # Dark Green (New High)
-                    styles[5] = 'background-color: #28a745; color: white; font-weight: bold; white-space: pre-wrap;'
-                elif "R(" in bu_txt:
-                    # Light Red (Reaction of Mandi)
-                    styles[5] = 'background-color: #f8d7da; color: #721c24; font-weight: bold; white-space: pre-wrap;'
-                elif "ATAK" in bu_txt:
-                    # Light Red (Atak Top)
-                    styles[5] = 'background-color: #f8d7da; color: #721c24; font-weight: bold; white-space: pre-wrap;'
+                # BU Column (Index 5)
+                if "BU(T)" in bu_txt or "Start Teji" in bu_txt: styles[5] = 'background-color: #28a745; color: white; font-weight: bold; white-space: pre-wrap;' # Dark Green
+                elif "R(" in bu_txt or "ATAK" in bu_txt: styles[5] = 'background-color: #f8d7da; color: #721c24; font-weight: bold; white-space: pre-wrap;' # Light Red
 
-                # Check BE Column
-                be_txt = str(row['BE (Mandi/Support)'])
-                if "BE(M)" in be_txt or "Mandi" in be_txt:
-                    # Dark Red (New Low)
-                    styles[6] = 'background-color: #dc3545; color: white; font-weight: bold; white-space: pre-wrap;'
-                elif "R(" in be_txt:
-                    # Light Green (Reaction of Teji)
-                    styles[6] = 'background-color: #d4edda; color: #155724; font-weight: bold; white-space: pre-wrap;'
-                elif "ATAK" in be_txt:
-                    # Light Green (Atak Bottom)
-                    styles[6] = 'background-color: #d4edda; color: #155724; font-weight: bold; white-space: pre-wrap;'
-                
+                # BE Column (Index 6)
+                if "BE(M)" in be_txt or "Start Mandi" in be_txt: styles[6] = 'background-color: #8B0000; color: white; font-weight: bold; white-space: pre-wrap;' # Dark Red
+                elif "R(" in be_txt or "ATAK" in be_txt: styles[6] = 'background-color: #d4edda; color: #155724; font-weight: bold; white-space: pre-wrap;' # Light Green
                 return styles
 
+            df['High_Low'] = df['High'].astype(str) + "\n" + df['Low'].astype(str)
+            df['Open_Close'] = df['Open'].astype(str) + "\n" + df['Close'].astype(str)
+            
+            disp = df[['Date', 'Open', 'High', 'Low', 'Close', 'BU', 'BE', 'Type']].copy()
+            disp.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'BU (Teji/Resist)', 'BE (Mandi/Support)', 'Type']
+
             st.dataframe(
-                disp.style.apply(color_cells, axis=1).format({
-                    "Date": lambda t: t.strftime("%d-%b-%Y"),
-                    "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}"
-                }),
+                disp.style.apply(color_cells, axis=1).format({"Date": lambda t: t.strftime("%d-%b-%Y"), "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}"}),
                 column_config={"Type": None, "BU (Teji/Resist)": st.column_config.TextColumn(width="medium"), "BE (Mandi/Support)": st.column_config.TextColumn(width="medium")},
                 use_container_width=True, height=800
             )
