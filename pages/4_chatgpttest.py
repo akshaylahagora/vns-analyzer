@@ -2,51 +2,45 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import requests
 from datetime import date, timedelta
 
-# -------------------------
-# Helpers: Fetch F&O list
-# -------------------------
+# -------------------------------------------------
+# 1) Your F&O stock list (no Dhan dependency)
+# -------------------------------------------------
+
+FO_STOCKS = [
+    "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS",
+    "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT",
+    "ASTRAL", "AUROPHARMA", "DMART", "AXISBANK", "BSE", "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV",
+    "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BDL", "BEL", "BHARATFORG", "BHEL", "BPCL",
+    "BHARTIARTL", "BIOCON", "BLUESTARCO", "BOSCHLTD", "BRITANNIA", "CGPOWER", "CANBK", "CDSL",
+    "CHOLAFIN", "CIPLA", "COALINDIA", "COFORGE", "COLPAL", "CAMS", "CONCOR", "CROMPTON",
+    "CUMMINSIND", "CYIENT", "DLF", "DABUR", "DALBHARAT", "DELHIVERY", "DIVISLAB", "DIXON",
+    "DRREDDY", "EICHERMOT", "EXIDEIND", "NYKAA", "FORTIS", "GAIL", "GMRAIRPORT", "GLENMARK",
+    "GODREJCP", "GODREJPROP", "GRASIM", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HFCL",
+    "HAVELLS", "HEROMOTOCO", "HINDALCO", "HAL", "HINDPETRO", "HINDUNILVR", "HINDZINC", "POWERINDIA",
+    "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB", "IIFL", "ITC", "INDIANB", "IEX",
+    "IOC", "IRCTC", "IRFC", "IREDA", "INDUSTOWER", "INDUSINDBK", "NAUKRI", "INFY", "INOXWIND",
+    "INDIGO", "JINDALSTEL", "JSWENERGY", "JSWSTEEL", "JIOFIN", "JUBLFOOD", "KEI", "KPITTECH",
+    "KALYANKJIL", "KAYNES", "KFINTECH", "KOTAKBANK", "LTF", "LICHSGFIN", "LTIM", "LT", "LAURUSLABS",
+    "LICI", "LODHA", "LUPIN", "M&M", "MANAPPURAM", "MANKIND", "MARICO", "MARUTI", "MFSL",
+    "MAXHEALTH", "MAZDOCK", "MPHASIS", "MCX", "MUTHOOTFIN", "NBCC", "NCC", "NHPC", "NMDC",
+    "NTPC", "NATIONALUM", "NESTLEIND", "NUVAMA", "OBEROIRLTY", "ONGC", "OIL", "PAYTM", "OFSS",
+    "POLICYBZR", "PGEL", "PIIND", "PNBHOUSING", "PAGEIND", "PATANJALI", "PERSISTENT", "PETRONET",
+    "PIDILITIND", "PPLPHARMA", "POLYCAB", "PFC", "POWERGRID", "PRESTIGE", "PNB", "RBLBANK",
+    "RECLTD", "RVNL", "RELIANCE", "SBICARD", "SBILIFE", "SHREECEM", "SRF", "SAMMAANCAP",
+    "MOTHERSON", "SHRIRAMFIN", "SIEMENS", "SOLARINDS", "SONACOMS", "SBIN", "SAIL", "SUNPHARMA",
+    "SUPREMEIND", "SUZLON", "SYNGENE", "TATACONSUM", "TITAGARH", "TVSMOTOR", "TCS", "TATAELXSI",
+    "TATAPOWER", "TATASTEEL", "TATATECH", "TECHM", "FEDERALBNK", "INDHOTEL", "PHOENIXLTD",
+    "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", "TIINDIA", "UNOMINDA", "UPL", "ULTRACEMCO",
+    "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "IDEA", "VOLTAS", "WIPRO", "YESBANK", "ZYDUSLIFE"
+]
+
+# -------------------------------------------------
+# 2) Fetch OHLC data from Yahoo
+# -------------------------------------------------
 
 @st.cache_data(show_spinner=True)
-def fetch_fo_stock_list() -> pd.DataFrame:
-    """
-    Fetch NSE F&O stock list by scraping Dhan's NSE F&O lot-size page.
-    Returns a DataFrame with at least a 'Symbol' column.
-    """
-    url = "https://dhan.co/nse-fno-lot-size/"
-    try:
-        tables = pd.read_html(url)
-        # Usually the first table is the full list, containing 'Symbol'
-        df = tables[0]
-        # Try to normalize symbol column name
-        possible_cols = [c for c in df.columns if "symbol" in str(c).lower()]
-        if possible_cols:
-            df.rename(columns={possible_cols[0]: "Symbol"}, inplace=True)
-        else:
-            # Fallback: assume first col is symbol
-            df.rename(columns={df.columns[0]: "Symbol"}, inplace=True)
-
-        # Clean symbol (remove spaces, etc.)
-        df["Symbol"] = df["Symbol"].astype(str).str.strip()
-
-        # Remove index derivatives like NIFTY, BANKNIFTY etc if you want only stocks
-        index_like = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
-        df = df[~df["Symbol"].isin(index_like)]
-
-        df = df.drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
-        return df[["Symbol"]]
-    except Exception as e:
-        # Fallback: minimal static list
-        fallback_symbols = ["RELIANCE", "HDFCBANK", "TCS", "INFY", "ICICIBANK"]
-        return pd.DataFrame({"Symbol": fallback_symbols})
-
-
-# -------------------------
-# Helpers: Fetch OHLC data
-# -------------------------
-
 def fetch_yahoo_ohlc(symbol: str, start: date, end: date) -> pd.DataFrame:
     """
     Fetch daily OHLC data from Yahoo Finance for an NSE stock.
@@ -62,9 +56,9 @@ def fetch_yahoo_ohlc(symbol: str, start: date, end: date) -> pd.DataFrame:
     return data[["Date", "High", "Low"]]
 
 
-# -------------------------
-# VNS Logic on High/Low
-# -------------------------
+# -------------------------------------------------
+# 3) VNS Logic using only High & Low
+# -------------------------------------------------
 
 def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -80,7 +74,6 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
 
     last_teji_high = None   # last Teji (BU) pivot high
     last_mandi_low = None   # last Mandi (BE) pivot low
-    last_major_event = None # "Teji" or "Mandi" (for breakout/breakdown sequences)
 
     signals = []
 
@@ -103,13 +96,11 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
                 signal_type = "Teji (BU)"
                 info = "First Teji: low break after this high."
                 last_teji_high = pivot_price
-                last_major_event = "Teji"
             else:
                 if pivot_price > last_teji_high:
                     signal_type = "Teji (BU)"
                     info = "New higher Teji high."
                     last_teji_high = pivot_price
-                    last_major_event = "Teji"
                 elif pivot_price < last_teji_high:
                     signal_type = "Atak (Double Top)"
                     info = f"Lower high vs previous Teji {last_teji_high:.2f}."
@@ -135,13 +126,11 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
                 signal_type = "Mandi (BE)"
                 info = "First Mandi: high break after this low."
                 last_mandi_low = pivot_price
-                last_major_event = "Mandi"
             else:
                 if pivot_price < last_mandi_low:
                     signal_type = "Mandi (BE)"
                     info = "New lower Mandi low."
                     last_mandi_low = pivot_price
-                    last_major_event = "Mandi"
                 elif pivot_price > last_mandi_low:
                     signal_type = "Atak (Double Bottom)"
                     info = f"Higher low vs previous Mandi {last_mandi_low:.2f}."
@@ -158,19 +147,16 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
                 }
             )
 
-    # Convert to DataFrame for second-pass processing (breakouts/breakdowns)
     sig_df = pd.DataFrame(signals)
     if sig_df.empty:
         return sig_df
 
-    # Second pass: detect Breakout / Breakdown based on Teji–Mandi–Teji or
-    # Mandi–Teji–Mandi type sequences.
-    # We work on a copy sorted by date.
+    # Second pass: detect Breakout / Breakdown based on
+    # Teji–Mandi–Teji or Mandi–Teji–Mandi structure
     sig_df = sig_df.sort_values("Date").reset_index(drop=True)
 
     extra_rows = []
 
-    # Track last Teji and last Mandi indices
     last_teji_idx = None
     last_mandi_idx = None
 
@@ -182,15 +168,12 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
         if stype.startswith("Mandi"):
             last_mandi_idx = i
 
-        # Look for breakout: Teji then Mandi then price crosses Teji level
-        # We'll use the underlying price data to check.
+        # Breakout: Teji then Mandi then price crosses Teji level
         if last_teji_idx is not None and last_mandi_idx is not None:
-            # If last Teji is before last Mandi, then we can watch for a breakout above that Teji
             if sig_df.loc[last_teji_idx, "Date"] < sig_df.loc[last_mandi_idx, "Date"]:
                 teji_price = sig_df.loc[last_teji_idx, "Price"]
                 mandi_date = sig_df.loc[last_mandi_idx, "Date"]
 
-                # Check if after Mandi date, any day's High >= teji_price
                 post = df[df["Date"] > mandi_date]
                 crossed = post[post["High"] >= teji_price]
                 if not crossed.empty:
@@ -203,11 +186,10 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
                             "Info": f"Price High crossed Teji level {teji_price:.2f} after Mandi.",
                         }
                     )
-                    # Reset so we don't keep adding multiple breakouts for the same pair
                     last_teji_idx = None
                     last_mandi_idx = None
 
-            # Look for breakdown: Mandi then Teji then price breaks below Mandi level
+            # Breakdown: Mandi then Teji then price breaks below Mandi level
             elif sig_df.loc[last_mandi_idx, "Date"] < sig_df.loc[last_teji_idx, "Date"]:
                 mandi_price = sig_df.loc[last_mandi_idx, "Price"]
                 teji_date = sig_df.loc[last_teji_idx, "Date"]
@@ -234,23 +216,24 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
     return sig_df
 
 
-# -------------------------
-# Streamlit UI
-# -------------------------
+# -------------------------------------------------
+# 4) Streamlit UI
+# -------------------------------------------------
 
 st.set_page_config(page_title="VNS Theory Scanner (High/Low Only)", layout="wide")
 
 st.title("📈 VNS Theory Scanner (High & Low Based)")
-st.write("Fetch F&O stocks from NSE (via Dhan), get Yahoo data, and mark Teji / Mandi / Atak / Breakout / Breakdown using only High & Low.")
+st.write(
+    "Select an F&O stock, choose duration, fetch data from Yahoo Finance, "
+    "and apply VNS logic (Teji / Mandi / Atak / Breakout / Breakdown) using only High & Low."
+)
 
-# Sidebar: pick stock, duration
+# Sidebar controls
 with st.sidebar:
     st.header("⚙️ Settings")
 
     st.subheader("1️⃣ Select F&O Stock")
-    fo_df = fetch_fo_stock_list()
-    symbol_list = fo_df["Symbol"].tolist()
-    selected_symbol = st.selectbox("F&O Stock Symbol", symbol_list, index=0)
+    selected_symbol = st.selectbox("F&O Stock Symbol", FO_STOCKS, index=FO_STOCKS.index("KOTAKBANK") if "KOTAKBANK" in FO_STOCKS else 0)
 
     st.subheader("2️⃣ Select Duration")
     today = date.today()
@@ -274,32 +257,29 @@ with st.sidebar:
         start_date = today - timedelta(days=90)
         end_date = today
     else:
-        # Custom date range
         custom_range = st.date_input(
             "Custom Date Range",
             value=(today - timedelta(days=90), today),
         )
-        if isinstance(custom_range, tuple) or isinstance(custom_range, list):
+        if isinstance(custom_range, (tuple, list)):
             start_date, end_date = custom_range
         else:
-            # If single date is chosen accidentally, use it as end; start 60 days earlier
             end_date = custom_range
             start_date = end_date - timedelta(days=60)
 
     st.markdown("---")
     run_button = st.button("🚀 Run VNS Scan")
 
-
-# Main panel
+# Main section
 if run_button:
     st.subheader(f"📊 Yahoo Price Data: {selected_symbol} ({start_date} → {end_date})")
 
     data = fetch_yahoo_ohlc(selected_symbol, start=start_date, end=end_date)
 
     if data.empty:
-        st.error("No data returned from Yahoo Finance. Check symbol or date range.")
+        st.error("No data returned from Yahoo Finance. Check symbol or date range, or ticker mapping on Yahoo.")
     else:
-        st.write("Raw high/low data used for VNS logic:")
+        st.write("Raw High/Low data used for VNS logic:")
         st.dataframe(data, use_container_width=True)
 
         st.subheader("🧠 VNS Signals (High/Low Only)")
@@ -309,6 +289,5 @@ if run_button:
             st.warning("No VNS signals detected in the selected period.")
         else:
             st.dataframe(sig_df, use_container_width=True)
-
 else:
     st.info("Select stock & duration in the sidebar, then click **Run VNS Scan**.")
