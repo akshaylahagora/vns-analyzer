@@ -8,53 +8,25 @@ import yfinance as yf
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wide")
 
-# --- CUSTOM CSS ---
+# --- CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: white; color: black; }
-    
-    div[data-testid="stMetricValue"] { color: #000000 !important; font-size: 1.6rem !important; font-weight: 700 !important; }
-    div[data-testid="stMetricLabel"] { color: #444444 !important; font-weight: 600 !important; }
+    div[data-testid="stMetricValue"] { color: #000000 !important; }
     
     .trend-card { padding: 15px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 1.2rem; border: 2px solid transparent; }
     .trend-bull { background-color: #d1e7dd; color: #0f5132; border-color: #badbcc; }
     .trend-bear { background-color: #f8d7da; color: #842029; border-color: #f5c2c7; }
-    .trend-neutral { background-color: #e2e3e5; color: #41464b; border-color: #d3d6d8; }
-
+    
     .stDataFrame { font-size: 1.1rem; }
     .stDataFrame td { vertical-align: middle !important; white-space: pre-wrap !important; }
-    .stSidebar label { color: #333 !important; }
-    .metric-container { background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 15px; text-align: center; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .metric-container { background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 15px; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- STOCK LIST ---
 STOCK_LIST = [
-    "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
-    "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
-    "ASTRAL", "AUROPHARMA", "DMART", "AXISBANK", "BSE", "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", 
-    "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BDL", "BEL", "BHARATFORG", "BHEL", "BPCL", 
-    "BHARTIARTL", "BIOCON", "BLUESTARCO", "BOSCHLTD", "BRITANNIA", "CGPOWER", "CANBK", "CDSL", 
-    "CHOLAFIN", "CIPLA", "COALINDIA", "COFORGE", "COLPAL", "CAMS", "CONCOR", "CROMPTON", 
-    "CUMMINSIND", "CYIENT", "DLF", "DABUR", "DALBHARAT", "DELHIVERY", "DIVISLAB", "DIXON", 
-    "DRREDDY", "EICHERMOT", "EXIDEIND", "NYKAA", "FORTIS", "GAIL", "GMRAIRPORT", "GLENMARK", 
-    "GODREJCP", "GODREJPROP", "GRASIM", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HFCL", 
-    "HAVELLS", "HEROMOTOCO", "HINDALCO", "HAL", "HINDPETRO", "HINDUNILVR", "HINDZINC", "POWERINDIA", 
-    "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB", "IIFL", "ITC", "INDIANB", "IEX", 
-    "IOC", "IRCTC", "IRFC", "IREDA", "INDUSTOWER", "INDUSINDBK", "NAUKRI", "INFY", "INOXWIND", 
-    "INDIGO", "JINDALSTEL", "JSWENERGY", "JSWSTEEL", "JIOFIN", "JUBLFOOD", "KEI", "KPITTECH", 
-    "KALYANKJIL", "KAYNES", "KFINTECH", "KOTAKBANK", "LTF", "LICHSGFIN", "LTIM", "LT", "LAURUSLABS", 
-    "LICI", "LODHA", "LUPIN", "M&M", "MANAPPURAM", "MANKIND", "MARICO", "MARUTI", "MFSL", 
-    "MAXHEALTH", "MAZDOCK", "MPHASIS", "MCX", "MUTHOOTFIN", "NBCC", "NCC", "NHPC", "NMDC", 
-    "NTPC", "NATIONALUM", "NESTLEIND", "NUVAMA", "OBEROIRLTY", "ONGC", "OIL", "PAYTM", "OFSS", 
-    "POLICYBZR", "PGEL", "PIIND", "PNBHOUSING", "PAGEIND", "PATANJALI", "PERSISTENT", "PETRONET", 
-    "PIDILITIND", "PPLPHARMA", "POLYCAB", "PFC", "POWERGRID", "PRESTIGE", "PNB", "RBLBANK", 
-    "RECLTD", "RVNL", "RELIANCE", "SBICARD", "SBILIFE", "SHREECEM", "SRF", "SAMMAANCAP", 
-    "MOTHERSON", "SHRIRAMFIN", "SIEMENS", "SOLARINDS", "SONACOMS", "SBIN", "SAIL", "SUNPHARMA", 
-    "SUPREMEIND", "SUZLON", "SYNGENE", "TATACONSUM", "TITAGARH", "TVSMOTOR", "TCS", "TATAELXSI", 
-    "TATAPOWER", "TATASTEEL", "TATATECH", "TECHM", "FEDERALBNK", "INDHOTEL", "PHOENIXLTD", 
-    "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", "TIINDIA", "UNOMINDA", "UPL", "ULTRACEMCO", 
-    "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "IDEA", "VOLTAS", "WIPRO", "YESBANK", "ZYDUSLIFE"
+    "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", "ASTRAL", "AUROPHARMA", "DMART", "AXISBANK", "BSE", "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BDL", "BEL", "BHARATFORG", "BHEL", "BPCL", "BHARTIARTL", "BIOCON", "BLUESTARCO", "BOSCHLTD", "BRITANNIA", "CGPOWER", "CANBK", "CDSL", "CHOLAFIN", "CIPLA", "COALINDIA", "COFORGE", "COLPAL", "CAMS", "CONCOR", "CROMPTON", "CUMMINSIND", "CYIENT", "DLF", "DABUR", "DALBHARAT", "DELHIVERY", "DIVISLAB", "DIXON", "DRREDDY", "EICHERMOT", "EXIDEIND", "NYKAA", "FORTIS", "GAIL", "GMRAIRPORT", "GLENMARK", "GODREJCP", "GODREJPROP", "GRASIM", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HFCL", "HAVELLS", "HEROMOTOCO", "HINDALCO", "HAL", "HINDPETRO", "HINDUNILVR", "HINDZINC", "POWERINDIA", "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB", "IIFL", "ITC", "INDIANB", "IEX", "IOC", "IRCTC", "IRFC", "IREDA", "INDUSTOWER", "INDUSINDBK", "NAUKRI", "INFY", "INOXWIND", "INDIGO", "JINDALSTEL", "JSWENERGY", "JSWSTEEL", "JIOFIN", "JUBLFOOD", "KEI", "KPITTECH", "KALYANKJIL", "KAYNES", "KFINTECH", "KOTAKBANK", "LTF", "LICHSGFIN", "LTIM", "LT", "LAURUSLABS", "LICI", "LODHA", "LUPIN", "M&M", "MANAPPURAM", "MANKIND", "MARICO", "MARUTI", "MFSL", "MAXHEALTH", "MAZDOCK", "MPHASIS", "MCX", "MUTHOOTFIN", "NBCC", "NCC", "NHPC", "NMDC", "NTPC", "NATIONALUM", "NESTLEIND", "NUVAMA", "OBEROIRLTY", "ONGC", "OIL", "PAYTM", "OFSS", "POLICYBZR", "PGEL", "PIIND", "PNBHOUSING", "PAGEIND", "PATANJALI", "PERSISTENT", "PETRONET", "PIDILITIND", "PPLPHARMA", "POLYCAB", "PFC", "POWERGRID", "PRESTIGE", "PNB", "RBLBANK", "RECLTD", "RVNL", "RELIANCE", "SBICARD", "SBILIFE", "SHREECEM", "SRF", "SAMMAANCAP", "MOTHERSON", "SHRIRAMFIN", "SIEMENS", "SOLARINDS", "SONACOMS", "SBIN", "SAIL", "SUNPHARMA", "SUPREMEIND", "SUZLON", "SYNGENE", "TATACONSUM", "TITAGARH", "TVSMOTOR", "TCS", "TATAELXSI", "TATAPOWER", "TATASTEEL", "TATATECH", "TECHM", "FEDERALBNK", "INDHOTEL", "PHOENIXLTD", "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", "TIINDIA", "UNOMINDA", "UPL", "ULTRACEMCO", "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "IDEA", "VOLTAS", "WIPRO", "YESBANK", "ZYDUSLIFE"
 ]
 STOCK_LIST = sorted(list(set(STOCK_LIST))) 
 
@@ -65,10 +37,10 @@ if 'end_date' not in st.session_state: st.session_state.end_date = datetime.now(
 def update_dates():
     sel = st.session_state.duration_selector
     now = datetime.now()
-    st.session_state.end_date = now
     days = {"1M":30, "2M":60, "3M":90, "6M":180, "1Y":365}
     if sel == "YTD": st.session_state.start_date = datetime(now.year, 1, 1)
     elif sel in days: st.session_state.start_date = now - timedelta(days=days[sel])
+    st.session_state.end_date = now
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -95,160 +67,127 @@ def fetch_data(symbol, start, end):
         return df.sort_values('Date').reset_index(drop=True)
     except: return None
 
-# --- VNS LOGIC ---
+# --- VNS LOGIC (Break Low/High to Mark) ---
 def analyze_vns(df):
     df['BU'], df['BE'], df['Type'] = "", "", ""
     trend = "Neutral"
     
-    # State Memory
-    last_peak = df.iloc[0]['High']
-    last_trough = df.iloc[0]['Low']
+    # Track Major Tops/Bottoms
+    last_major_top = df.iloc[0]['High']
+    last_major_bot = df.iloc[0]['Low']
     
-    # These track the *active* Reaction level we are watching
-    reaction_support = df.iloc[0]['Low']
-    reaction_resist = df.iloc[0]['High']
+    # Track "Reaction" levels (Swings inside a trend)
+    reaction_high = df.iloc[0]['High']
+    reaction_low = df.iloc[0]['Low']
     
-    # Indices to help us "Look Back"
-    last_peak_idx = 0
-    last_trough_idx = 0
+    # Indices to find swigs
+    start_search_idx = 0
     
     for i in range(1, len(df)):
         curr = df.iloc[i]
-        c_h, c_l = curr['High'], curr['Low']
+        prev = df.iloc[i-1]
+        
+        c_h, c_l, c_c = curr['High'], curr['Low'], curr['Close']
+        p_h, p_l = prev['High'], prev['Low']
         d_str = curr['Date'].strftime('%d-%b').upper()
         
-        # --- TEJI (UPTREND) ---
-        if trend == "Teji":
-            if c_h > last_peak:
-                # 1. New High -> Mark TEJI (Today)
-                df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_h:.2f}"
-                df.at[i, 'Type'] = "bull_dark"
+        # 1. LOW BROKEN -> MARK A TOP (BU)
+        if c_l < p_l:
+            # Find the highest point since the last marked event
+            swing_df = df.iloc[start_search_idx : i]
+            if not swing_df.empty:
+                max_idx = swing_df['High'].idxmax()
+                max_val = df.at[max_idx, 'High']
                 
-                # Update Peak and Reset Search Range
-                last_peak = c_h
-                last_peak_idx = i
+                # Check Logic
+                bu_label = ""
+                bu_type = ""
                 
-            else:
-                # Price is retracing. We need to find the "Reaction Low".
-                # The Reaction Low is the LOWEST point between the Last Peak and Today.
+                if trend == "Teji":
+                    if max_val >= last_major_top:
+                        bu_label = f"BU(T) {d_str}\n{max_val:.2f}"; bu_type = "bull_dark" # Continuation
+                        last_major_top = max_val
+                    else:
+                        bu_label = f"ATAK (Top)\n{max_val:.2f}"; bu_type = "bear_light" # Failed Top
+                        # Atak in Teji implies potential reversal
                 
-                # Dynamic Scan:
-                swing_df = df.iloc[last_peak_idx : i+1] # Include today
+                elif trend == "Mandi":
+                    # In Mandi, a new top is a Reaction
+                    bu_label = f"R (Mandi)\n{max_val:.2f}"; bu_type = "bear_light"
+                    reaction_high = max_val
                 
-                # Find the global min in this swing
+                else: # Neutral
+                    if max_val > last_major_top:
+                        trend = "Teji"
+                        bu_label = f"Start Teji\n{max_val:.2f}"; bu_type = "bull_dark"
+                        last_major_top = max_val
+                
+                # Apply Mark
+                df.at[max_idx, 'BU'] = bu_label
+                df.at[max_idx, 'Type'] = bu_type
+                
+                # Check for Breakout (Trend Change to Teji)
+                if trend == "Mandi" and max_val > reaction_high:
+                     # This logic is usually handled on the crossing day, handled below
+                     pass
+                
+                start_search_idx = i # Reset search
+
+        # 2. HIGH BROKEN -> MARK A BOTTOM (BE)
+        if c_h > p_h:
+            # Find the lowest point since the last marked event
+            swing_df = df.iloc[start_search_idx : i]
+            if not swing_df.empty:
                 min_idx = swing_df['Low'].idxmin()
-                current_reaction_val = df.at[min_idx, 'Low']
+                min_val = df.at[min_idx, 'Low']
                 
-                # Update our tracking variable
-                reaction_support = current_reaction_val
+                be_label = ""
+                be_type = ""
                 
-                # NOW CHECK FOR BREAKDOWN
-                # A breakdown happens if CURRENT LOW breaks the PREVIOUSLY established Reaction Low.
-                # But in VNS, the reaction low updates as price goes lower... UNTIL a bounce happens.
+                if trend == "Mandi":
+                    if min_val <= last_major_bot:
+                        be_label = f"BE(M) {d_str}\n{min_val:.2f}"; be_type = "bear_dark" # Continuation
+                        last_major_bot = min_val
+                    else:
+                        be_label = f"ATAK (Bot)\n{min_val:.2f}"; be_type = "bull_light" # Failed Bottom
                 
-                # Logic: If price drops below the *Lowest Point of the Previous Swing*? No.
-                # Logic: We need to see if we formed a low (Reaction), bounced up (Lower High), and THEN broke the low.
-                
-                # Let's check if 'min_idx' is NOT today (meaning we had a low in the past)
-                # And if 'i' > 'min_idx' (we are past that low)
-                # And if today's low < reaction_support? (Wait, reaction_support IS min of swing including today)
-                
-                # CORRECT LOGIC:
-                # We need to find if there is a "Peak" between the "Reaction Low" and "Today".
-                # 1. Identify the Lowest Low since Peak (excluding today).
-                interim_swing = df.iloc[last_peak_idx : i] # Exclude today
-                if not interim_swing.empty:
-                    prev_min_idx = interim_swing['Low'].idxmin()
-                    prev_min_val = df.at[prev_min_idx, 'Low']
+                elif trend == "Teji":
+                    # In Teji, a new low is a Reaction
+                    be_label = f"R (Teji)\n{min_val:.2f}"; be_type = "bull_light"
+                    reaction_low = min_val
                     
-                    # If Today breaks that Previous Low
-                    if c_l < prev_min_val:
-                        # 2. Check if there was a bounce (High) between that Low and Today
-                        bounce_df = df.iloc[prev_min_idx+1 : i]
-                        if not bounce_df.empty:
-                            bounce_high = bounce_df['High'].max()
-                            
-                            # CONFIRMED BREAKDOWN
-                            
-                            # A. Mark the Reaction (Past)
-                            r_date = df.at[prev_min_idx, 'Date'].strftime('%d-%b').upper()
-                            df.at[prev_min_idx, 'BE'] = f"R(Teji) {r_date}\n{prev_min_val:.2f}"
-                            df.at[prev_min_idx, 'Type'] = "bull_light" # Light Green
-                            
-                            # B. Mark the Atak (Past - The Bounce High)
-                            atak_idx = bounce_df['High'].idxmax()
-                            atak_val = df.at[atak_idx, 'High']
-                            a_date = df.at[atak_idx, 'Date'].strftime('%d-%b').upper()
-                            
-                            df.at[atak_idx, 'BU'] = f"ATAK (Top) {a_date}\n{atak_val:.2f}"
-                            df.at[atak_idx, 'Type'] = "bear_light" # Light Red
-                            
-                            # C. Mark Mandi (Today)
-                            df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_l:.2f}"
-                            df.at[i, 'Type'] = "bear_dark" # Dark Red
-                            
-                            trend = "Mandi"
-                            last_trough = c_l; last_trough_idx = i
-                            reaction_resist = c_h
-
-        # --- MANDI (DOWNTREND) ---
-        elif trend == "Mandi":
-            if c_l < last_trough:
-                # 1. New Low -> Mark MANDI (Today)
-                df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_l:.2f}"
-                df.at[i, 'Type'] = "bear_dark"
+                else: # Neutral
+                     if min_val < last_major_bot:
+                        trend = "Mandi"
+                        be_label = f"Start Mandi\n{min_val:.2f}"; be_type = "bear_dark"
+                        last_major_bot = min_val
                 
-                last_trough = c_l
-                last_trough_idx = i
+                # Apply Mark
+                df.at[min_idx, 'BE'] = be_label
+                df.at[min_idx, 'Type'] = be_type
                 
-            else:
-                # Check for Breakout
-                # 1. Identify Highest High since Trough (excluding today)
-                interim_swing = df.iloc[last_trough_idx : i]
-                if not interim_swing.empty:
-                    prev_max_idx = interim_swing['High'].idxmax()
-                    prev_max_val = df.at[prev_max_idx, 'High']
-                    
-                    # If Today breaks that Previous High
-                    if c_h > prev_max_val:
-                        # 2. Check for Dip (Low) between that High and Today
-                        dip_df = df.iloc[prev_max_idx+1 : i]
-                        if not dip_df.empty:
-                            dip_low = dip_df['Low'].min()
-                            
-                            # CONFIRMED BREAKOUT
-                            
-                            # A. Mark Reaction (Past)
-                            r_date = df.at[prev_max_idx, 'Date'].strftime('%d-%b').upper()
-                            df.at[prev_max_idx, 'BU'] = f"R(Mandi) {r_date}\n{prev_max_val:.2f}"
-                            df.at[prev_max_idx, 'Type'] = "bear_light" # Light Red
-                            
-                            # B. Mark Atak (Past - The Dip Low)
-                            atak_idx = dip_df['Low'].idxmin()
-                            atak_val = df.at[atak_idx, 'Low']
-                            a_date = df.at[atak_idx, 'Date'].strftime('%d-%b').upper()
-                            
-                            df.at[atak_idx, 'BE'] = f"ATAK (Bot) {a_date}\n{atak_val:.2f}"
-                            df.at[atak_idx, 'Type'] = "bull_light" # Light Green
-                            
-                            # C. Mark Teji (Today)
-                            df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_h:.2f}"
-                            df.at[i, 'Type'] = "bull_dark" # Dark Green
-                            
-                            trend = "Teji"
-                            last_peak = c_h; last_peak_idx = i
-                            reaction_support = c_l
+                start_search_idx = i
 
-        # --- NEUTRAL ---
-        else:
-            if c_h > last_peak:
-                trend = "Teji"; df.at[i, 'BU'] = "Start Teji"; df.at[i, 'Type']="bull_dark"
-                last_peak=c_h; last_peak_idx=i; reaction_support=df.iloc[i-1]['Low']
-            elif c_l < last_trough:
-                trend = "Mandi"; df.at[i, 'BE'] = "Start Mandi"; df.at[i, 'Type']="bear_dark"
-                last_trough=c_l; last_trough_idx=i; reaction_resist=df.iloc[i-1]['High']
-            
-    return df, trend, reaction_resist, reaction_support
+        # 3. BREAKOUT / BREAKDOWN CHECKS (Trend Flipping)
+        # Teji -> Mandi (Break Reaction Low)
+        if trend == "Teji" and c_c < reaction_low:
+             trend = "Mandi"
+             df.at[i, 'BE'] = f"BREAKDOWN\n{c_c:.2f}"
+             df.at[i, 'Type'] = "bear_dark"
+             last_major_bot = c_l # Start tracking new low
+             
+        # Mandi -> Teji (Break Reaction High)
+        if trend == "Mandi" and c_c > reaction_high:
+             trend = "Teji"
+             df.at[i, 'BU'] = f"BREAKOUT\n{c_c:.2f}"
+             df.at[i, 'Type'] = "bull_dark"
+             last_major_top = c_h
+
+    # Return active levels
+    fin_res = reaction_high if trend == "Mandi" else last_major_top
+    fin_sup = reaction_low if trend == "Teji" else last_major_bot
+    
+    return df, trend, fin_res, fin_sup
 
 # --- RENDER ---
 st.title(f"📊 VNS Theory: {selected_stock}")
@@ -270,12 +209,8 @@ if run_btn:
                 elif final_trend == "Mandi": color, txt = ("#f8d7da", "BEARISH (MANDI)")
                 st.markdown(f"""<div style="background:{color}; padding:15px; border-radius:8px; text-align:center; color:black; font-weight:bold; font-size:1.2rem; border:1px solid #ccc;">{txt}</div>""", unsafe_allow_html=True)
             with c2: st.markdown(card("Last Close", f"{df.iloc[-1]['Close']:.2f}"), unsafe_allow_html=True)
-            
-            res_disp = f"{fin_res:.2f}" if final_trend == "Mandi" and fin_res else "-"
-            sup_disp = f"{fin_sup:.2f}" if final_trend == "Teji" and fin_sup else "-"
-            
-            with c3: st.markdown(card("Active Resist", res_disp), unsafe_allow_html=True)
-            with c4: st.markdown(card("Active Support", sup_disp), unsafe_allow_html=True)
+            with c3: st.markdown(card("Active Resist", f"{fin_res:.2f}"), unsafe_allow_html=True)
+            with c4: st.markdown(card("Active Support", f"{fin_sup:.2f}"), unsafe_allow_html=True)
             
             st.divider()
             
@@ -287,21 +222,17 @@ if run_btn:
                 bu_txt = str(row['BU (Teji/Resist)'])
                 be_txt = str(row['BE (Mandi/Support)'])
                 
-                # BU Colors
-                if "BU(T)" in bu_txt or "Start Teji" in bu_txt:
-                    styles[5] = 'background-color: #228B22; color: white; font-weight: bold; white-space: pre-wrap;' # Dark Green
-                elif "R(" in bu_txt:
-                    styles[5] = 'background-color: #f8d7da; color: #721c24; font-weight: bold; white-space: pre-wrap;' # Light Red
-                elif "ATAK" in bu_txt:
-                    styles[5] = 'background-color: #f8d7da; color: #721c24; font-weight: bold; white-space: pre-wrap;' # Light Red
+                # BU
+                if "BU(T)" in bu_txt or "Start Teji" in bu_txt or "BREAKOUT" in bu_txt:
+                    styles[5] = 'background-color: #228B22; color: white; font-weight: bold; white-space: pre-wrap;'
+                elif "R(" in bu_txt or "ATAK" in bu_txt:
+                    styles[5] = 'background-color: #f8d7da; color: black; font-weight: bold; white-space: pre-wrap;'
 
-                # BE Colors
-                if "BE(M)" in be_txt or "Start Mandi" in be_txt:
-                    styles[6] = 'background-color: #8B0000; color: white; font-weight: bold; white-space: pre-wrap;' # Dark Red
-                elif "R(" in be_txt:
-                    styles[6] = 'background-color: #d4edda; color: #155724; font-weight: bold; white-space: pre-wrap;' # Light Green
-                elif "ATAK" in be_txt:
-                    styles[6] = 'background-color: #d4edda; color: #155724; font-weight: bold; white-space: pre-wrap;' # Light Green
+                # BE
+                if "BE(M)" in be_txt or "Start Mandi" in be_txt or "BREAKDOWN" in be_txt:
+                    styles[6] = 'background-color: #8B0000; color: white; font-weight: bold; white-space: pre-wrap;'
+                elif "R(" in be_txt or "ATAK" in be_txt:
+                    styles[6] = 'background-color: #d4edda; color: black; font-weight: bold; white-space: pre-wrap;'
                 
                 return styles
 
