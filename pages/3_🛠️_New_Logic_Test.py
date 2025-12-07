@@ -1,33 +1,108 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import urllib.parse
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="VNS Logic Test", page_icon="🛠️", layout="wide")
 
 st.title("🛠️ New VNS Logic Test")
-st.markdown("Testing new rules: **Higher Highs (Teji)**, **Reaction Breakdowns (Atak/Mandi)**.")
+st.markdown("Testing new rules: **Higher Highs (Teji)**, **Lower Lows (Mandi)**, and **Reaction Point Reversals (Atak)**.")
 
-# --- CSS ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: white; color: black; }
-    .stDataFrame td { vertical-align: middle !important; white-space: pre-wrap !important; }
+    
+    /* TABLE STYLES */
+    .excel-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: 'Segoe UI', Arial, sans-serif;
+        font-size: 14px;
+        color: #000;
+        margin-bottom: 50px;
+    }
+    
+    .excel-table th {
+        background-color: #EFEFEF;
+        color: #000000;
+        font-weight: bold;
+        border: 1px solid #BDBDBD;
+        padding: 10px;
+        text-align: center;
+        vertical-align: middle;
+    }
+    
+    .excel-table td {
+        border: 1px solid #D0D0D0;
+        padding: 6px 10px;
+        text-align: center;
+        vertical-align: middle;
+    }
+    
+    /* STACKED DATA */
+    .val-top { font-weight: bold; font-size: 1.1em; color: #000; display: block; }
+    .val-bot { font-size: 1.0em; color: #555; display: block; margin-top: 2px; }
+    
+    /* COLORS */
+    .c-bull { background-color: #28a745; color: white; font-weight: bold; } /* Dark Green */
+    .c-bear { background-color: #dc3545; color: white; font-weight: bold; } /* Dark Red */
+    .c-bull-light { background-color: #d4edda; color: #155724; font-weight: bold; } /* Light Green */
+    .c-bear-light { background-color: #f8d7da; color: #721c24; font-weight: bold; } /* Light Red */
+    
+    /* Sidebar text fix */
     .stSidebar label { color: #333 !important; }
-    div[role="radiogroup"] > label { border: 1px solid #ccc; background: #f8f9fa; padding: 5px 10px; border-radius: 4px; }
+    
+    /* Radio Button Tabs */
+    div[role="radiogroup"] { flex-wrap: wrap; gap: 5px; }
+    div[role="radiogroup"] > label { 
+        border: 1px solid #ccc; 
+        background: #f8f9fa;
+        padding: 5px 10px;
+        border-radius: 4px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- STOCK LIST ---
-STOCK_LIST = ["RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "ITC", "SBIN", "BHARTIARTL", "L&T", "AXISBANK", "KOTAKBANK", "HINDUNILVR", "TATAMOTORS", "MARUTI", "HCLTECH", "SUNPHARMA", "TITAN", "BAJFINANCE", "ULTRACEMCO", "ASIANPAINT", "NTPC", "POWERGRID", "M&M", "ADANIENT", "ADANIPORTS", "COALINDIA", "WIPRO", "BAJAJFINSV", "NESTLEIND", "JSWSTEEL", "GRASIM", "ONGC", "TATASTEEL", "HDFCLIFE", "SBILIFE", "DRREDDY", "EICHERMOT", "CIPLA", "DIVISLAB", "BPCL", "HINDALCO", "HEROMOTOCO", "APOLLOHOSP", "TATACONSUM", "BRITANNIA", "UPL", "ZOMATO", "PAYTM", "DLF", "INDIGO", "HAL", "BEL", "VBL", "TRENT", "JIOFIN", "ADANIPOWER", "IRFC", "PFC", "RECLTD", "BHEL"]
-STOCK_LIST.sort()
+# --- COMPLETE STOCK LIST (180+) ---
+STOCK_LIST = [
+    "360ONE", "ABB", "APLAPOLLO", "AUBANK", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", 
+    "ABCAPITAL", "ALKEM", "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "ASHOKLEY", "ASIANPAINT", 
+    "ASTRAL", "AUROPHARMA", "DMART", "AXISBANK", "BSE", "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", 
+    "BANDHANBNK", "BANKBARODA", "BANKINDIA", "BDL", "BEL", "BHARATFORG", "BHEL", "BPCL", 
+    "BHARTIARTL", "BIOCON", "BLUESTARCO", "BOSCHLTD", "BRITANNIA", "CGPOWER", "CANBK", "CDSL", 
+    "CHOLAFIN", "CIPLA", "COALINDIA", "COFORGE", "COLPAL", "CAMS", "CONCOR", "CROMPTON", 
+    "CUMMINSIND", "CYIENT", "DLF", "DABUR", "DALBHARAT", "DELHIVERY", "DIVISLAB", "DIXON", 
+    "DRREDDY", "EICHERMOT", "EXIDEIND", "NYKAA", "FORTIS", "GAIL", "GMRAIRPORT", "GLENMARK", 
+    "GODREJCP", "GODREJPROP", "GRASIM", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HFCL", 
+    "HAVELLS", "HEROMOTOCO", "HINDALCO", "HAL", "HINDPETRO", "HINDUNILVR", "HINDZINC", "POWERINDIA", 
+    "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB", "IIFL", "ITC", "INDIANB", "IEX", 
+    "IOC", "IRCTC", "IRFC", "IREDA", "INDUSTOWER", "INDUSINDBK", "NAUKRI", "INFY", "INOXWIND", 
+    "INDIGO", "JINDALSTEL", "JSWENERGY", "JSWSTEEL", "JIOFIN", "JUBLFOOD", "KEI", "KPITTECH", 
+    "KALYANKJIL", "KAYNES", "KFINTECH", "KOTAKBANK", "LTF", "LICHSGFIN", "LTIM", "LT", "LAURUSLABS", 
+    "LICI", "LODHA", "LUPIN", "M&M", "MANAPPURAM", "MANKIND", "MARICO", "MARUTI", "MFSL", 
+    "MAXHEALTH", "MAZDOCK", "MPHASIS", "MCX", "MUTHOOTFIN", "NBCC", "NCC", "NHPC", "NMDC", 
+    "NTPC", "NATIONALUM", "NESTLEIND", "NUVAMA", "OBEROIRLTY", "ONGC", "OIL", "PAYTM", "OFSS", 
+    "POLICYBZR", "PGEL", "PIIND", "PNBHOUSING", "PAGEIND", "PATANJALI", "PERSISTENT", "PETRONET", 
+    "PIDILITIND", "PPLPHARMA", "POLYCAB", "PFC", "POWERGRID", "PRESTIGE", "PNB", "RBLBANK", 
+    "RECLTD", "RVNL", "RELIANCE", "SBICARD", "SBILIFE", "SHREECEM", "SRF", "SAMMAANCAP", 
+    "MOTHERSON", "SHRIRAMFIN", "SIEMENS", "SOLARINDS", "SONACOMS", "SBIN", "SAIL", "SUNPHARMA", 
+    "SUPREMEIND", "SUZLON", "SYNGENE", "TATACONSUM", "TITAGARH", "TVSMOTOR", "TCS", "TATAELXSI", 
+    "TATAPOWER", "TATASTEEL", "TATATECH", "TECHM", "FEDERALBNK", "INDHOTEL", "PHOENIXLTD", 
+    "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", "TIINDIA", "UNOMINDA", "UPL", "ULTRACEMCO", 
+    "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "IDEA", "VOLTAS", "WIPRO", "YESBANK", "ZYDUSLIFE"
+]
+STOCK_LIST = sorted(list(set(STOCK_LIST))) 
 
 # --- STATE ---
 if 'test_start_date' not in st.session_state: st.session_state.test_start_date = datetime.now() - timedelta(days=60)
+if 'test_duration_label' not in st.session_state: st.session_state.test_duration_label = "2M"
 
 def update_dates():
     sel = st.session_state.duration_select
+    st.session_state.test_duration_label = sel
     now = datetime.now()
     if sel == "1M": st.session_state.test_start_date = now - timedelta(days=30)
     elif sel == "2M": st.session_state.test_start_date = now - timedelta(days=60)
@@ -40,15 +115,19 @@ with st.sidebar:
     st.header("⚙️ Settings")
     selected_stock = st.selectbox("Select Stock", STOCK_LIST, index=STOCK_LIST.index("KOTAKBANK") if "KOTAKBANK" in STOCK_LIST else 0)
     st.divider()
-    st.radio("Duration", ["1M", "2M", "3M", "6M", "1Y", "Custom"], index=1, horizontal=True, key="duration_select", on_change=update_dates)
     
-    if st.session_state.duration_select == "Custom":
+    st.subheader("Time Period")
+    period_sel = st.radio("Duration", ["1M", "2M", "3M", "6M", "1Y", "Custom"], index=1, horizontal=True, key="duration_select", on_change=update_dates)
+    
+    if period_sel == "Custom":
         c_dates = st.date_input("Range", (st.session_state.test_start_date, datetime.now()))
         if len(c_dates) == 2: st.session_state.test_start_date = datetime.combine(c_dates[0], datetime.min.time())
-        
+    
     st.divider()
+    st.subheader("Price Filter (Validation)")
     min_p = st.number_input("Min Price", 0, value=1000)
     max_p = st.number_input("Max Price", 0, value=100000)
+    
     st.divider()
     run_btn = st.button("🚀 Verify New Logic", type="primary", use_container_width=True)
 
@@ -57,7 +136,7 @@ with st.sidebar:
 def fetch_data(symbol, start):
     try:
         yf_symbol = f"{symbol}.NS"
-        req_start = start - timedelta(days=60)
+        req_start = start - timedelta(days=60) # Buffer
         df = yf.download(yf_symbol, start=req_start, progress=False, auto_adjust=False)
         if df.empty: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
@@ -67,21 +146,18 @@ def fetch_data(symbol, start):
         return df.sort_values('Date').reset_index(drop=True)
     except: return None
 
-# --- 🛠️ REFINED LOGIC (Bounce Detection) ---
+# --- 🛠️ NEW LOGIC (LOOK BACK FIX) ---
 def analyze_new_logic(df):
-    df['BU'], df['BE'], df['Type'] = "", "", ""
+    df['BU_Txt'], df['BU_Cls'] = "", ""
+    df['BE_Txt'], df['BE_Cls'] = "", ""
+    
     trend = "Neutral"
     
-    # Trackers
     last_peak = df.iloc[0]['High']
     last_trough = df.iloc[0]['Low']
     
-    # Reaction Tracking (Dynamic)
-    swing_low = df.iloc[0]['Low'] # For Teji -> Mandi
-    swing_high = df.iloc[0]['High'] # For Mandi -> Teji
-    
-    swing_low_idx = 0
-    swing_high_idx = 0
+    reaction_support = df.iloc[0]['Low']
+    reaction_resist = df.iloc[0]['High']
     
     last_peak_idx = 0
     last_trough_idx = 0
@@ -89,109 +165,89 @@ def analyze_new_logic(df):
     for i in range(1, len(df)):
         curr = df.iloc[i]
         c_h, c_l = curr['High'], curr['Low']
-        d_str = curr['Date'].strftime('%d-%b').upper()
+        date_str = curr['Date'].strftime('%d-%b').upper()
         
-        # --- TEJI (UPTREND) ---
+        # TEJI (Up)
         if trend == "Teji":
-            # 1. Continuation (New High)
             if c_h > last_peak:
-                df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_h:.2f}"; df.at[i, 'Type'] = "bull_dark"
+                # Mark NEW HIGH (Teji)
+                df.at[i, 'BU_Txt'] = f"BU(T) {date_str}\n{c_h:.2f}"
+                df.at[i, 'BU_Cls'] = "c-bull"
                 
-                # Mark previous swing low as the Confirmed Reaction
-                # (Logic: The low between old peak and new peak is the reaction)
-                if last_peak_idx < swing_low_idx < i:
-                    df.at[swing_low_idx, 'BE'] = f"R(Teji)\n{swing_low:.2f}"
-                    df.at[swing_low_idx, 'Type'] = "bull_light"
-
-                last_peak = c_h; last_peak_idx = i
-                swing_low = c_l; swing_low_idx = i # Reset swing low tracking
+                # REACTION: Find lowest low between old peak and new peak
+                swing_df = df.iloc[last_peak_idx:i+1]
+                reaction_support = swing_df['Low'].min()
                 
-            else:
-                # Track the lowest low since peak (Potential Reaction)
-                if c_l < swing_low:
-                    swing_low = c_l; swing_low_idx = i
+                # Mark Reaction Support (Light Green)
+                df.at[i, 'BE_Txt'] = f"R(Teji)\n{reaction_support:.2f}"
+                df.at[i, 'BE_Cls'] = "c-bull-light"
+                
+                last_peak = c_h
+                last_peak_idx = i
+                
+            elif c_l < reaction_support:
+                # 3. Support Broken -> Look Back for ATAK
+                interim_df = df.iloc[last_peak_idx+1 : i]
+                if not interim_df.empty:
+                    atak_idx = interim_df['High'].idxmax()
+                    atak_val = interim_df.loc[atak_idx, 'High']
                     
-                # 2. Reversal Check (Break Reaction Low)
-                # Logic: If we drop below 'swing_low', AND we had a bounce before this drop?
-                # Your example: 20th High -> 21st Low -> 23rd Lower High -> 24th Break.
+                    # Mark past row as ATAK (Top) - Light Red
+                    df.at[atak_idx, 'BU_Txt'] = f"ATAK (Top)\n{atak_val:.2f}"
+                    df.at[atak_idx, 'BU_Cls'] = "c-bear-light"
                 
-                # We need to check if there was a "Lower High" (Bounce) between Swing Low and Current.
-                # Look at data between swing_low_idx and current i
-                if i > swing_low_idx:
-                    bounce_df = df.iloc[swing_low_idx+1 : i]
-                    if not bounce_df.empty:
-                        bounce_high = bounce_df['High'].max()
-                        bounce_idx = bounce_df['High'].idxmax()
-                        
-                        # If current low breaks the swing low
-                        if c_l < swing_low:
-                            # 1. Mark the Bounce High as ATAK
-                            df.at[bounce_idx, 'BU'] = f"ATAK (Top)\n{bounce_high:.2f}"
-                            df.at[bounce_idx, 'Type'] = "bear_light"
-                            
-                            # 2. Mark Previous Low as Reaction (if not marked)
-                            df.at[swing_low_idx, 'BE'] = f"R(Teji)\n{swing_low:.2f}"
-                            df.at[swing_low_idx, 'Type'] = "bull_light"
-                            
-                            # 3. Mark Today as MANDI
-                            df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_l:.2f}"
-                            df.at[i, 'Type'] = "bear_dark"
-                            
-                            trend = "Mandi"
-                            last_trough = c_l; last_trough_idx = i
-                            swing_high = c_h; swing_high_idx = i # Start tracking high for Mandi
-
-        # --- MANDI (DOWNTREND) ---
-        elif trend == "Mandi":
-            # 1. Continuation (New Low)
-            if c_l < last_trough:
-                df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_l:.2f}"; df.at[i, 'Type'] = "bear_dark"
+                # Mark Today as MANDI (Dark Red)
+                trend = "Mandi"
+                df.at[i, 'BE_Txt'] = f"BE(M) {date_str}\n{c_l:.2f}"
+                df.at[i, 'BE_Cls'] = "c-bear"
                 
-                # Mark previous swing high as Reaction
-                if last_trough_idx < swing_high_idx < i:
-                    df.at[swing_high_idx, 'BU'] = f"R(Mandi)\n{swing_high:.2f}"
-                    df.at[swing_high_idx, 'Type'] = "bear_light"
-
                 last_trough = c_l; last_trough_idx = i
-                swing_high = c_h; swing_high_idx = i
-                
-            else:
-                # Track highest high since trough
-                if c_h > swing_high:
-                    swing_high = c_h; swing_high_idx = i
-                    
-                # 2. Reversal Check (Break Reaction High)
-                if i > swing_high_idx:
-                    dip_df = df.iloc[swing_high_idx+1 : i]
-                    if not dip_df.empty:
-                        dip_low = dip_df['Low'].min()
-                        dip_idx = dip_df['Low'].idxmin()
-                        
-                        if c_h > swing_high:
-                            # 1. Mark Dip Low as ATAK
-                            df.at[dip_idx, 'BE'] = f"ATAK (Bot)\n{dip_low:.2f}"
-                            df.at[dip_idx, 'Type'] = "bull_light"
-                            
-                            # 2. Mark Prev High as Reaction
-                            df.at[swing_high_idx, 'BU'] = f"R(Mandi)\n{swing_high:.2f}"
-                            df.at[swing_high_idx, 'Type'] = "bear_light"
-                            
-                            # 3. Mark Today as TEJI
-                            df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_h:.2f}"
-                            df.at[i, 'Type'] = "bull_dark"
-                            
-                            trend = "Teji"
-                            last_peak = c_h; last_peak_idx = i
-                            swing_low = c_l; swing_low_idx = i
+                reaction_resist = c_h # Reset
 
-        # --- NEUTRAL ---
+        # MANDI (Down)
+        elif trend == "Mandi":
+            if c_l < last_trough:
+                # Mark NEW LOW (Mandi)
+                df.at[i, 'BE_Txt'] = f"BE(M) {date_str}\n{c_l:.2f}"
+                df.at[i, 'BE_Cls'] = "c-bear"
+                
+                # REACTION: Find highest high between old trough and new trough
+                swing_df = df.iloc[last_trough_idx:i+1]
+                reaction_resist = swing_df['High'].max()
+                
+                # Mark Reaction Resistance (Light Red)
+                df.at[i, 'BU_Txt'] = f"R(Mandi)\n{reaction_resist:.2f}"
+                df.at[i, 'BU_Cls'] = "c-bear-light"
+                
+                last_trough = c_l; last_trough_idx = i
+                
+            elif c_h > reaction_resist:
+                # 3. Resistance Broken -> Look Back for ATAK
+                interim_df = df.iloc[last_trough_idx+1 : i]
+                if not interim_df.empty:
+                    atak_idx = interim_df['Low'].idxmin()
+                    atak_val = interim_df.loc[atak_idx, 'Low']
+                    
+                    # Mark past row as ATAK (Bottom) - Light Green
+                    df.at[atak_idx, 'BE_Txt'] = f"ATAK (Bot)\n{atak_val:.2f}"
+                    df.at[atak_idx, 'BE_Cls'] = "c-bull-light"
+                
+                # Mark Today as TEJI (Dark Green)
+                trend = "Teji"
+                df.at[i, 'BU_Txt'] = f"BU(T) {date_str}\n{c_h:.2f}"
+                df.at[i, 'BU_Cls'] = "c-bull"
+                
+                last_peak = c_h; last_peak_idx = i
+                reaction_support = c_l # Reset
+
+        # STARTUP
         else:
             if c_h > last_peak:
-                trend = "Teji"; df.at[i, 'BU'] = "Start Teji"; df.at[i, 'Type']="bull_dark"
-                last_peak=c_h; last_peak_idx=i; swing_low=c_l; swing_low_idx=i
+                trend = "Teji"; df.at[i, 'BU_Txt'] = "Start Teji"; df.at[i, 'BU_Cls']="c-bull"
+                last_peak=c_h; last_peak_idx=i; reaction_support=df.iloc[i-1]['Low']
             elif c_l < last_trough:
-                trend = "Mandi"; df.at[i, 'BE'] = "Start Mandi"; df.at[i, 'Type']="bear_dark"
-                last_trough=c_l; last_trough_idx=i; swing_high=c_h; swing_high_idx=i
+                trend = "Mandi"; df.at[i, 'BE_Txt'] = "Start Mandi"; df.at[i, 'BE_Cls']="c-bear"
+                last_trough=c_l; last_trough_idx=i; reaction_resist=df.iloc[i-1]['High']
 
     return df
 
@@ -199,29 +255,53 @@ def analyze_new_logic(df):
 if run_btn:
     with st.spinner(f"Fetching {selected_stock}..."):
         raw_df = fetch_data(selected_stock, st.session_state.test_start_date)
+        
         if raw_df is not None:
+            last_price = raw_df.iloc[-1]['Close']
+            if not (min_p <= last_price <= max_p):
+                st.warning(f"⚠️ Stock Price ({last_price:.2f}) is outside your filter ({min_p}-{max_p}), but showing data anyway.")
+            
             df = analyze_new_logic(raw_df)
+            
+            # Filter Display Range
             mask = (df['Date'] >= st.session_state.test_start_date)
             final_view = df.loc[mask].copy()
             
-            # Format
-            cols = ['Date', 'Open', 'High', 'Low', 'Close', 'BU', 'BE', 'Type']
-            final_view = final_view[cols]
-            final_view.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'BU (Teji/Resist)', 'BE (Mandi/Support)', 'Type']
+            # HTML Render for safe layout
+            html = """
+            <table class="excel-table">
+                <thead>
+                    <tr>
+                        <th width="15%">Date</th>
+                        <th width="20%">High<br><span style='font-size:0.8em; font-weight:normal;'>Low</span></th>
+                        <th width="20%">Open<br><span style='font-size:0.8em; font-weight:normal;'>Close</span></th>
+                        <th width="22%">BU (Teji / Resist)</th>
+                        <th width="22%">BE (Mandi / Support)</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
+            for _, row in final_view.iterrows():
+                d = row['Date'].strftime('%d-%b-%Y')
+                hl = f"<div class='val-top'>{row['High']:.2f}</div><div class='val-bot'>{row['Low']:.2f}</div>"
+                oc = f"<div class='val-top'>{row['Open']:.2f}</div><div class='val-bot'>{row['Close']:.2f}</div>"
+                
+                # Check empty cells
+                bu = row['BU_Txt'] if row['BU_Txt'] else ""
+                be = row['BE_Txt'] if row['BE_Txt'] else ""
+                
+                html += f"""
+                <tr>
+                    <td>{d}</td>
+                    <td>{hl}</td>
+                    <td>{oc}</td>
+                    <td class="{row['BU_Cls']}">{bu}</td>
+                    <td class="{row['BE_Cls']}">{be}</td>
+                </tr>
+                """
+            html += "</tbody></table>"
+            st.markdown(html, unsafe_allow_html=True)
             
-            # Colors
-            def color_rows(row):
-                s = row['Type']
-                if s == 'bull_dark': return ['background-color: #228B22; color: white; font-weight: bold; white-space: pre-wrap;'] * len(row)
-                if s == 'bear_dark': return ['background-color: #8B0000; color: white; font-weight: bold; white-space: pre-wrap;'] * len(row)
-                if s == 'bull_light': return ['background-color: #d4edda; color: black; font-weight: bold; white-space: pre-wrap;'] * len(row)
-                if s == 'bear_light': return ['background-color: #FFC0CB; color: black; font-weight: bold; white-space: pre-wrap;'] * len(row)
-                return ['white-space: pre-wrap;'] * len(row)
-
-            st.dataframe(
-                final_view.style.apply(color_rows, axis=1).format({"Date": lambda t: t.strftime("%d-%b-%Y"), "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}"}),
-                use_container_width=True, height=800,
-                column_config={"Type": None, "BU (Teji/Resist)": st.column_config.TextColumn(width="medium"), "BE (Mandi/Support)": st.column_config.TextColumn(width="medium")}
-            )
         else: st.error("No data found.")
-else: st.info("Select options and click Verify.")
+else:
+    st.info("Select options and click Verify.")
