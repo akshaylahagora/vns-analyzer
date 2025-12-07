@@ -12,15 +12,12 @@ st.set_page_config(page_title="VNS Pro Dashboard", page_icon="📈", layout="wid
 st.markdown("""
 <style>
     .stApp { background-color: white; color: black; }
-    
     div[data-testid="stMetricValue"] { color: #000000 !important; font-size: 1.6rem !important; font-weight: 700 !important; }
     div[data-testid="stMetricLabel"] { color: #444444 !important; font-weight: 600 !important; }
-    
     .trend-card { padding: 15px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 1.2rem; border: 2px solid transparent; }
     .trend-bull { background-color: #d1e7dd; color: #0f5132; border-color: #badbcc; }
     .trend-bear { background-color: #f8d7da; color: #842029; border-color: #f5c2c7; }
     .trend-neutral { background-color: #e2e3e5; color: #41464b; border-color: #d3d6d8; }
-
     .stDataFrame { font-size: 1.1rem; }
     .stDataFrame td { vertical-align: middle !important; white-space: pre-wrap !important; }
     .stSidebar label { color: #333 !important; }
@@ -61,126 +58,141 @@ with st.sidebar:
 def fetch_data(symbol, start, end):
     try:
         yf_symbol = f"{symbol}.NS"
-        req_start = start - timedelta(days=60)
+        req_start = start - timedelta(days=90) # Buffer to find context
         df = yf.download(yf_symbol, start=req_start, end=end + timedelta(days=1), progress=False, auto_adjust=False)
         if df.empty: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df = df.reset_index()
         df = df.rename(columns={'Date': 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close'})
         df['Date'] = pd.to_datetime(df['Date'])
-        for c in ['Open', 'High', 'Low', 'Close']: df[c] = df[c].astype(float)
         return df.sort_values('Date').reset_index(drop=True)
     except: return None
 
-# --- VNS LOGIC ---
+# --- VNS LOGIC (SWING CONFIRMATION) ---
 def analyze_vns(df):
     df['BU'], df['BE'], df['Type'] = "", "", ""
-    trend = "Neutral"
+    trend = "Neutral" # Teji, Mandi
     
-    last_peak = df.iloc[0]['High']
-    last_trough = df.iloc[0]['Low']
+    # State Memory
+    last_major_high = df.iloc[0]['High']
+    last_major_low = df.iloc[0]['Low']
     
-    swing_low = df.iloc[0]['Low']
-    swing_low_idx = 0
+    reaction_low = df.iloc[0]['Low']
+    reaction_high = df.iloc[0]['High']
     
-    swing_high = df.iloc[0]['High']
-    swing_high_idx = 0
-    
-    last_peak_idx = 0
-    last_trough_idx = 0
+    # Range Indices
+    last_bottom_idx = 0
+    last_top_idx = 0
     
     for i in range(1, len(df)):
         curr = df.iloc[i]
-        c_h, c_l = curr['High'], curr['Low']
+        prev = df.iloc[i-1]
+        
+        c_h, c_l, c_c = curr['High'], curr['Low'], curr['Close']
+        p_h, p_l = prev['High'], prev['Low']
         d_str = curr['Date'].strftime('%d-%b').upper()
         
-        # --- TEJI ---
-        if trend == "Teji":
-            if c_h > last_peak:
-                # Continuation
-                df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_h:.2f}"; df.at[i, 'Type'] = "bull_dark"
-                last_peak = c_h; last_peak_idx = i
-                swing_low = c_l; swing_low_idx = i
-            else:
-                # Retracement
-                if c_l < swing_low:
-                    # Potential Breakdown? Check if valid bounce exists before this low
-                    # Scan between established swing_low_idx and i
-                    
-                    interim = df.iloc[swing_low_idx+1 : i]
-                    if not interim.empty:
-                        # Found a bounce (Higher Low / Lower High)
-                        bounce_high = interim['High'].max()
-                        
-                        # Mark Reaction (Past)
-                        r_date = df.at[swing_low_idx, 'Date'].strftime('%d-%b').upper()
-                        df.at[swing_low_idx, 'BE'] = f"R(Teji) {r_date}\n{swing_low:.2f}"
-                        df.at[swing_low_idx, 'Type'] = "bull_light"
-                        
-                        # Mark Atak (Past)
-                        atak_idx = interim['High'].idxmax()
-                        atak_val = df.at[atak_idx, 'High']
-                        a_date = df.at[atak_idx, 'Date'].strftime('%d-%b').upper()
-                        df.at[atak_idx, 'BU'] = f"ATAK (Top) {a_date}\n{atak_val:.2f}"
-                        df.at[atak_idx, 'Type'] = "bear_light"
-                        
-                        # Mark Mandi (Today)
-                        df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_l:.2f}"; df.at[i, 'Type'] = "bear_dark"
-                        
-                        trend = "Mandi"
-                        last_trough = c_l; last_trough_idx = i
-                        swing_high = c_h; swing_high_idx = i
-                    
-                    # Update lowest point
-                    swing_low = c_l; swing_low_idx = i
-
-        # --- MANDI ---
-        elif trend == "Mandi":
-            if c_l < last_trough:
-                # Continuation
-                df.at[i, 'BE'] = f"BE(M) {d_str}\n{c_l:.2f}"; df.at[i, 'Type'] = "bear_dark"
-                last_trough = c_l; last_trough_idx = i
-                swing_high = c_h; swing_high_idx = i
-            else:
-                if c_h > swing_high:
-                    # Potential Breakout? Check if valid dip
-                    interim = df.iloc[swing_high_idx+1 : i]
-                    if not interim.empty:
-                        dip_low = interim['Low'].min()
-                        
-                        # Mark Reaction (Past)
-                        r_date = df.at[swing_high_idx, 'Date'].strftime('%d-%b').upper()
-                        df.at[swing_high_idx, 'BU'] = f"R(Mandi) {r_date}\n{swing_high:.2f}"
-                        df.at[swing_high_idx, 'Type'] = "bear_light"
-                        
-                        # Mark Atak (Past)
-                        atak_idx = interim['Low'].idxmin()
-                        atak_val = df.at[atak_idx, 'Low']
-                        a_date = df.at[atak_idx, 'Date'].strftime('%d-%b').upper()
-                        df.at[atak_idx, 'BE'] = f"ATAK (Bot) {a_date}\n{atak_val:.2f}"
-                        df.at[atak_idx, 'Type'] = "bull_light"
-                        
-                        # Mark Teji (Today)
-                        df.at[i, 'BU'] = f"BU(T) {d_str}\n{c_h:.2f}"; df.at[i, 'Type'] = "bull_dark"
-                        
-                        trend = "Teji"
-                        last_peak = c_h; last_peak_idx = i
-                        swing_low = c_l; swing_low_idx = i
-                        
-                    swing_high = c_h; swing_high_idx = i
-
-        # --- NEUTRAL ---
-        else:
-            if c_h > last_peak:
-                trend = "Teji"; df.at[i, 'BU'] = "Start Teji"; df.at[i, 'Type']="bull_dark"
-                last_peak=c_h; last_peak_idx=i; swing_low=c_l; swing_low_idx=i
-            elif c_l < last_trough:
-                trend = "Mandi"; df.at[i, 'BE'] = "Start Mandi"; df.at[i, 'Type']="bear_dark"
-                last_trough=c_l; last_trough_idx=i; swing_high=c_h; swing_high_idx=i
+        # --- 1. CONFIRM A TOP (BU) ---
+        # Trigger: Low is broken (c_l < p_l)
+        if c_l < p_l:
+            # We have a confirmed local top. Now we check WHAT kind of top it is.
             
-    # Active Levels
-    fin_res = swing_high if trend == "Mandi" else "-"
-    fin_sup = swing_low if trend == "Teji" else "-"
+            # Find the highest high since the last confirmed bottom
+            # Range: last_bottom_idx to i-1
+            search_start = last_bottom_idx
+            if search_start >= i: search_start = i-1 # Safety
+            
+            swing_df = df.iloc[search_start : i]
+            if not swing_df.empty:
+                peak_idx = swing_df['High'].idxmax()
+                peak_val = df.at[peak_idx, 'High']
+                
+                # Logic to label this peak
+                if trend == "Teji":
+                    if peak_val >= last_major_high:
+                        # Higher High -> Continuation
+                        df.at[peak_idx, 'BU'] = f"BU(T) {d_str}\n{peak_val:.2f}"
+                        df.at[peak_idx, 'Type'] = "bull_dark"
+                        last_major_high = peak_val
+                        last_top_idx = peak_idx
+                    else:
+                        # Lower High -> Atak
+                        df.at[peak_idx, 'BU'] = f"ATAK (Top) {d_str}\n{peak_val:.2f}"
+                        df.at[peak_idx, 'Type'] = "bear_light"
+                        last_top_idx = peak_idx
+                        
+                elif trend == "Mandi":
+                    # In Mandi, a top is a Reaction High
+                    df.at[peak_idx, 'BU'] = f"R(Mandi) {d_str}\n{peak_val:.2f}"
+                    df.at[peak_idx, 'Type'] = "bear_light"
+                    reaction_high = peak_val
+                    last_top_idx = peak_idx
+                    
+                else: # Neutral
+                    if peak_val > last_major_high:
+                        trend = "Teji"
+                        df.at[peak_idx, 'BU'] = f"Start Teji\n{peak_val:.2f}"
+                        df.at[peak_idx, 'Type'] = "bull_dark"
+                        last_major_high = peak_val
+                        last_top_idx = peak_idx
+
+        # --- 2. CONFIRM A BOTTOM (BE) ---
+        # Trigger: High is crossed (c_h > p_h)
+        if c_h > p_h:
+            # We have a confirmed local bottom.
+            
+            # Find lowest low since last confirmed top
+            search_start = last_top_idx
+            if search_start >= i: search_start = i-1
+            
+            swing_df = df.iloc[search_start : i]
+            if not swing_df.empty:
+                trough_idx = swing_df['Low'].idxmin()
+                trough_val = df.at[trough_idx, 'Low']
+                
+                if trend == "Mandi":
+                    if trough_val <= last_major_low:
+                        # Lower Low -> Continuation
+                        df.at[trough_idx, 'BE'] = f"BE(M) {d_str}\n{trough_val:.2f}"
+                        df.at[trough_idx, 'Type'] = "bear_dark"
+                        last_major_low = trough_val
+                        last_bottom_idx = trough_idx
+                    else:
+                        # Higher Low -> Atak
+                        df.at[trough_idx, 'BE'] = f"ATAK (Bot) {d_str}\n{trough_val:.2f}"
+                        df.at[trough_idx, 'Type'] = "bull_light"
+                        last_bottom_idx = trough_idx
+                
+                elif trend == "Teji":
+                    # In Teji, a bottom is a Reaction Low
+                    df.at[trough_idx, 'BE'] = f"R(Teji) {d_str}\n{trough_val:.2f}"
+                    df.at[trough_idx, 'Type'] = "bull_light"
+                    reaction_low = trough_val
+                    last_bottom_idx = trough_idx
+                    
+                else: # Neutral
+                    if trough_val < last_major_low:
+                        trend = "Mandi"
+                        df.at[trough_idx, 'BE'] = f"Start Mandi\n{trough_val:.2f}"
+                        df.at[trough_idx, 'Type'] = "bear_dark"
+                        last_major_low = trough_val
+                        last_bottom_idx = trough_idx
+
+        # --- 3. TREND SWITCHING (Immediate on Cross) ---
+        if trend == "Teji" and c_c < reaction_low:
+            trend = "Mandi"
+            # We can mark the breakdown row if desired
+            # df.at[i, 'BE'] = f"BREAKDOWN\n{c_c:.2f}"
+            last_major_low = c_l # Start tracking new trend from here
+            
+        if trend == "Mandi" and c_c > reaction_high:
+            trend = "Teji"
+            # df.at[i, 'BU'] = f"BREAKOUT\n{c_c:.2f}"
+            last_major_high = c_h
+
+    # Active Levels for Header
+    fin_res = reaction_high if trend == "Mandi" else "-"
+    fin_sup = reaction_low if trend == "Teji" else "-"
     
     return df, trend, fin_res, fin_sup
 
@@ -217,22 +229,13 @@ if run_btn:
                 bu_txt = str(row['BU (Teji/Resist)'])
                 be_txt = str(row['BE (Mandi/Support)'])
                 
-                # BU
-                if "BU(T)" in bu_txt or "Start Teji" in bu_txt:
-                    styles[5] = 'background-color: #228B22; color: white; font-weight: bold; white-space: pre-wrap;'
-                elif "R(" in bu_txt:
-                    styles[5] = 'background-color: #f8d7da; color: #721c24; font-weight: bold; white-space: pre-wrap;'
-                elif "ATAK" in bu_txt:
-                    styles[5] = 'background-color: #f8d7da; color: #721c24; font-weight: bold; white-space: pre-wrap;'
-
-                # BE
-                if "BE(M)" in be_txt or "Start Mandi" in be_txt:
-                    styles[6] = 'background-color: #8B0000; color: white; font-weight: bold; white-space: pre-wrap;'
-                elif "R(" in be_txt:
-                    styles[6] = 'background-color: #d4edda; color: #155724; font-weight: bold; white-space: pre-wrap;'
-                elif "ATAK" in be_txt:
-                    styles[6] = 'background-color: #d4edda; color: #155724; font-weight: bold; white-space: pre-wrap;'
+                if "BU(T)" in bu_txt or "Start Teji" in bu_txt: styles[5] = 'background-color: #228B22; color: white; font-weight: bold; white-space: pre-wrap;'
+                elif "R(" in bu_txt: styles[5] = 'background-color: #f8d7da; color: #721c24; font-weight: bold; white-space: pre-wrap;'
+                elif "ATAK" in bu_txt: styles[5] = 'background-color: #f8d7da; color: #721c24; font-weight: bold; white-space: pre-wrap;'
                 
+                if "BE(M)" in be_txt or "Start Mandi" in be_txt: styles[6] = 'background-color: #8B0000; color: white; font-weight: bold; white-space: pre-wrap;'
+                elif "R(" in be_txt: styles[6] = 'background-color: #d4edda; color: #155724; font-weight: bold; white-space: pre-wrap;'
+                elif "ATAK" in be_txt: styles[6] = 'background-color: #d4edda; color: #155724; font-weight: bold; white-space: pre-wrap;'
                 return styles
 
             st.dataframe(
