@@ -5,7 +5,7 @@ import yfinance as yf
 from datetime import date, timedelta
 
 # -------------------------------------------------
-# 1) Your F&O stock list (static, no Dhan)
+# 1) Your F&O stock list (static)
 # -------------------------------------------------
 
 FO_STOCKS = [
@@ -36,8 +36,9 @@ FO_STOCKS = [
     "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "IDEA", "VOLTAS", "WIPRO", "YESBANK", "ZYDUSLIFE"
 ]
 
+
 # -------------------------------------------------
-# 2) Fetch OHLC data from Yahoo (High & Low only)
+# 2) Fetch OHLC data from Yahoo Finance
 # -------------------------------------------------
 
 @st.cache_data(show_spinner=True)
@@ -48,15 +49,33 @@ def fetch_yahoo_ohlc(symbol: str, start: date, end: date) -> pd.DataFrame:
     Uses .NS suffix for Yahoo.
     """
     ticker = symbol.upper().strip() + ".NS"
+
     data = yf.download(ticker, start=start, end=end + timedelta(days=1))
 
-    if data.empty:
+    if data is None or data.empty:
         return pd.DataFrame()
 
-    data = data.reset_index()
-    # Ensure we always have Date, High, Low
-    data.rename(columns={"Date": "Date", "High": "High", "Low": "Low"}, inplace=True)
-    return data[["Date", "High", "Low"]]
+    # Ensure Date is a column
+    if "Date" not in data.columns:
+        data = data.reset_index()
+
+    # If after reset_index Date still not in columns, try to find a datetime-like column
+    if "Date" not in data.columns:
+        for col in data.columns:
+            if pd.api.types.is_datetime64_any_dtype(data[col]):
+                data = data.rename(columns={col: "Date"})
+                break
+
+    if "Date" not in data.columns:
+        # Last fallback: can't identify Date column -> return empty
+        return pd.DataFrame()
+
+    # Ensure High/Low exist
+    if "High" not in data.columns or "Low" not in data.columns:
+        return pd.DataFrame()
+
+    out = data[["Date", "High", "Low"]].copy()
+    return out
 
 
 # -------------------------------------------------
@@ -80,33 +99,37 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.copy()
 
-    # 1) Ensure Date column exists and is datetime
+    # 1) Ensure Date exists
     if "Date" not in df.columns:
-        if df.index.name == "Date":
+        # Try converting index to column
+        if df.index.name is not None:
             df = df.reset_index()
-        else:
-            # If this happens, something is off with upstream data
-            raise ValueError("Input df has no 'Date' column for VNS logic.")
+        # After reset, still no 'Date'? then we can't do VNS.
+        if "Date" not in df.columns:
+            return pd.DataFrame(columns=["Date", "Price", "Type", "Info"])
 
+    # 2) Coerce Date to datetime, drop invalid
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df = df.dropna(subset=["Date"])
     if df.empty:
         return pd.DataFrame(columns=["Date", "Price", "Type", "Info"])
 
-    # 2) Ensure High/Low are numeric
+    # 3) Ensure High & Low exist and are numeric
+    if "High" not in df.columns or "Low" not in df.columns:
+        return pd.DataFrame(columns=["Date", "Price", "Type", "Info"])
+
     df["High"] = pd.to_numeric(df["High"], errors="coerce")
     df["Low"] = pd.to_numeric(df["Low"], errors="coerce")
     df = df.dropna(subset=["High", "Low"])
     if df.empty or len(df) < 2:
         return pd.DataFrame(columns=["Date", "Price", "Type", "Info"])
 
-    # 3) Sort df by date
+    # 4) Sort df by date
     df = df.sort_values("Date").reset_index(drop=True)
 
-    # --- VNS core state ---
+    # --- VNS state ---
     last_teji_high = None   # last Teji (BU) pivot high
     last_mandi_low = None   # last Mandi (BE) pivot low
-
     signals = []
 
     # 1st pass: Teji / Mandi / Atak / Reaction
@@ -185,7 +208,7 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
 
     sig_df = pd.DataFrame(signals)
 
-    # --- Defensive cleaning of sig_df before sorting ---
+    # --- Clean signals before sort ---
     if "Date" not in sig_df.columns:
         return pd.DataFrame(columns=["Date", "Price", "Type", "Info"])
 
@@ -194,12 +217,10 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
     if sig_df.empty:
         return sig_df
 
-    # Sort by date
     sig_df = sig_df.sort_values("Date").reset_index(drop=True)
 
     # 2nd pass: Breakout / Breakdown (Teji–Mandi–Teji, Mandi–Teji–Mandi)
     extra_rows = []
-
     last_teji_idx = None
     last_mandi_idx = None
 
@@ -211,12 +232,11 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
         if stype.startswith("Mandi"):
             last_mandi_idx = i
 
-        # Need both to even consider breakout/breakdown
         if last_teji_idx is not None and last_mandi_idx is not None:
             teji_date = sig_df.loc[last_teji_idx, "Date"]
             mandi_date = sig_df.loc[last_mandi_idx, "Date"]
 
-            # Case 1: Teji older, then Mandi newer → watch for breakout above Teji
+            # Case 1: Teji older, then Mandi newer → potential Breakout above Teji
             if teji_date < mandi_date:
                 teji_price = sig_df.loc[last_teji_idx, "Price"]
                 post = df[df["Date"] > mandi_date]
@@ -231,11 +251,10 @@ def compute_vns_signals(df: pd.DataFrame) -> pd.DataFrame:
                             "Info": f"Price High crossed Teji level {teji_price:.2f} after Mandi.",
                         }
                     )
-                    # Reset so we don’t keep repeating on the same pair
                     last_teji_idx = None
                     last_mandi_idx = None
 
-            # Case 2: Mandi older, then Teji newer → watch for breakdown below Mandi
+            # Case 2: Mandi older, then Teji newer → potential Breakdown below Mandi
             elif mandi_date < teji_date:
                 mandi_price = sig_df.loc[last_mandi_idx, "Price"]
                 post = df[df["Date"] > teji_date]
@@ -305,7 +324,6 @@ with st.sidebar:
         start_date = today - timedelta(days=90)
         end_date = today
     else:
-        # custom range
         custom_range = st.date_input(
             "Custom Date Range",
             value=(today - timedelta(days=90), today),
@@ -313,7 +331,6 @@ with st.sidebar:
         if isinstance(custom_range, (tuple, list)):
             start_date, end_date = custom_range
         else:
-            # streamlit can give single date if user mis-clicks
             end_date = custom_range
             start_date = end_date - timedelta(days=60)
 
@@ -329,10 +346,11 @@ if run_button:
     if data.empty:
         st.error(
             "No data returned from Yahoo Finance. "
-            "Check symbol, date range, or internet/Yahoo connectivity."
+            "Check symbol, date range, or Yahoo connectivity."
         )
     else:
         st.write("Raw High/Low data used for VNS logic:")
+        st.write("Columns:", list(data.columns))
         st.dataframe(data, use_container_width=True)
 
         st.subheader("🧠 VNS Signals (High/Low Only)")
